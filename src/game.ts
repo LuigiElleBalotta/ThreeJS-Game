@@ -33,6 +33,9 @@ export class Game {
   mousePos = { x: 0, y: 0 };
   selectedEnemy: Enemy | null = null;
   selectionCircle: THREE.Mesh | null = null;
+  damageTexts: { div: HTMLDivElement, start: number, angle: number }[] = [];
+  spellCooldown: number = 0;
+  spellLastCast: number = 0;
 
   constructor() {
     this.scene = new THREE.Scene();
@@ -165,6 +168,54 @@ export class Game {
     window.addEventListener("touchstart", startAudio, { once: true });
 
     this.initWorld();
+
+    // Gestione hotkey spellbar (1-0,-,click)
+    window.addEventListener("keydown", (e) => {
+      const key = e.key;
+      if (key === "1") this.castSpell(0);
+      if (key === "2") this.castSpell(1);
+      if (key === "3") this.castSpell(2);
+      if (key === "4") this.castSpell(3);
+      if (key === "5") this.castSpell(4);
+      if (key === "6") this.castSpell(5);
+      if (key === "7") this.castSpell(6);
+      if (key === "8") this.castSpell(7);
+      if (key === "9") this.castSpell(8);
+      if (key === "0") this.castSpell(9);
+      if (key === "-") this.castSpell(10);
+    });
+
+    // Click manuale sull'ultimo slot
+    setTimeout(() => {
+      const spellbar = document.getElementById("spellbar");
+      if (spellbar) {
+        const slots = spellbar.getElementsByClassName("spell-slot");
+        if (slots.length >= 12) {
+          slots[11].addEventListener("click", () => this.castSpell(11));
+        }
+      }
+    }, 500);
+
+    // Mostra testo danno subito
+    window.addEventListener("playerDamage", (e: any) => {
+      const amount = e.detail.amount;
+      const div = document.createElement("div");
+      div.innerText = `-${amount}`;
+      div.style.position = "fixed";
+      div.style.color = "#ff2222";
+      div.style.fontWeight = "bold";
+      div.style.fontSize = "28px";
+      div.style.pointerEvents = "none";
+      div.style.textShadow = "0 0 8px #000, 0 0 2px #fff";
+      div.style.zIndex = "99999";
+      div.style.padding = "2px 10px";
+      div.style.borderRadius = "8px";
+      div.style.background = "rgba(0,0,0,0.15)";
+      document.body.appendChild(div);
+      // Angolo random per effetto circolare
+      const angle = Math.random() * Math.PI * 2;
+      this.damageTexts.push({ div, start: performance.now(), angle });
+    });
 
     // Selezione nemico con click
     window.addEventListener("mousedown", (event) => {
@@ -304,6 +355,28 @@ export class Game {
         isSwiping = false;
         lastTouchX = null;
       });
+    }
+  }
+
+  castSpell(slot: number) {
+    // Solo slot 0 (tasto 1) attivo per ora
+    if (slot !== 0) return;
+    const now = performance.now();
+    if (now - this.spellLastCast < 1000) return; // cooldown 1s
+    this.spellLastCast = now;
+
+    // Serve un enemy selezionato, vivo e vicino (<3.5)
+    if (
+      this.selectedEnemy &&
+      this.selectedEnemy.isAlive() &&
+      this.player.mesh.position.distanceTo(this.selectedEnemy.mesh.position) < 3.5
+    ) {
+      this.selectedEnemy.takeDamage(this.player.attackDamage);
+      // Se muore, rimuovi dalla scena e deseleziona
+      if (!this.selectedEnemy.isAlive()) {
+        this.scene.remove(this.selectedEnemy.mesh);
+        this.selectedEnemy = null;
+      }
     }
   }
 
@@ -517,6 +590,29 @@ export class Game {
         this.frames = 0;
       }
     }
+
+    // Aggiorna posizione e animazione dei testi danno
+    const now = performance.now();
+    this.damageTexts = this.damageTexts.filter(({ div, start, angle }) => {
+      const t = (now - start) / 1000;
+      if (t > 1) {
+        div.remove();
+        return false;
+      }
+      // Movimento circolare attorno al player (più lento)
+      const radius = 60;
+      const theta = angle + t * Math.PI;
+      // Proietta posizione player su schermo
+      const pos = this.player.mesh.position.clone();
+      pos.y += 2.2;
+      const vector = pos.project(this.camera);
+      const x = (vector.x * 0.5 + 0.5) * window.innerWidth + Math.cos(theta) * radius;
+      const y = (-vector.y * 0.5 + 0.5) * window.innerHeight + Math.sin(theta) * radius;
+      div.style.left = `${x}px`;
+      div.style.top = `${y}px`;
+      div.style.opacity = `${1 - t}`;
+      return true;
+    });
 
     // Aggiorna cursore anche se la camera si muove
     {

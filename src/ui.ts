@@ -35,6 +35,16 @@ export class UI {
       slot.style.fontSize = "1.5rem";
       slot.style.color = "#fff";
       slot.textContent = "";
+      if (i === 0) {
+        const icon = document.createElement("img");
+        icon.src = "/spells/icons/ability_warrior_savageblow.jpg";
+        icon.alt = "spell";
+        icon.style.width = "100%";
+        icon.style.height = "100%";
+        icon.style.objectFit = "cover";
+        icon.style.borderRadius = "6px";
+        slot.appendChild(icon);
+      }
       spellbar.appendChild(slot);
     }
     document.body.appendChild(spellbar);

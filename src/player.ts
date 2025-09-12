@@ -98,6 +98,8 @@ export class Player {
 
   takeDamage(amount: number) {
     this.hp = Math.max(this.hp - amount, 0);
+    const event = new CustomEvent("playerDamage", { detail: { amount } });
+    window.dispatchEvent(event);
   }
 
   isAlive(): boolean {

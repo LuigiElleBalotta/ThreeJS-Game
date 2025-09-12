@@ -18,6 +18,7 @@ export class Game {
 
   cameraControl!: ThirdPersonCamera;
   rightMouseDown: boolean = false;
+  mouseLeftDown: boolean = false;
   healthBarsVisible: boolean = true;
   healthBarStatusDiv!: HTMLDivElement;
   sceneObstacles: THREE.Mesh[] = [];
@@ -693,9 +694,11 @@ export class Game {
 
     window.addEventListener("mousedown", (e) => {
       if (e.button === 2) this.rightMouseDown = true;
+      if (e.button === 0) this.mouseLeftDown = true;
     });
     window.addEventListener("mouseup", (e) => {
       if (e.button === 2) this.rightMouseDown = false;
+      if (e.button === 0) this.mouseLeftDown = false;
     });
 
     window.addEventListener("playerAttack", ()=>this.handleAttack());
@@ -967,7 +970,12 @@ export class Game {
       moving = true;
     }
 
-    if (moving && moveDir.lengthSq() > 0) {
+    // Mouse sinistro+destro: cammina dritto seguendo la camera
+    if (this.mouseLeftDown && this.rightMouseDown) {
+      let cameraDirCopy = cameraDir.clone().normalize().multiplyScalar(this.player.speed);
+      tryMovePlayer(cameraDirCopy);
+      this.player.mesh.rotation.y = Math.atan2(cameraDirCopy.x, cameraDirCopy.z);
+    } else if (moving && moveDir.lengthSq() > 0) {
       moveDir.normalize().multiplyScalar(this.player.speed);
       tryMovePlayer(moveDir);
       // Ruota il player verso la direzione di movimento

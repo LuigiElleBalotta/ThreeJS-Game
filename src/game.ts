@@ -189,13 +189,19 @@ export class Game {
     `;
     document.body.appendChild(this.enemyBarDiv);
 
-    // Click manuale sull'ultimo slot
+    // Click/tap sui vari slot spellbar (mobile e desktop)
     setTimeout(() => {
       const spellbar = document.getElementById("spellbar");
       if (spellbar) {
         const slots = spellbar.getElementsByClassName("spell-slot");
-        if (slots.length >= 12) {
-          slots[11].addEventListener("click", () => this.castSpell(11));
+        for (let i = 0; i < slots.length; i++) {
+          // Click desktop
+          slots[i].addEventListener("click", () => this.castSpell(i));
+          // Tap mobile
+          slots[i].addEventListener("touchstart", (e) => {
+            e.preventDefault();
+            this.castSpell(i);
+          });
         }
       }
     }, 500);

@@ -128,33 +128,7 @@ export class Game {
     window.addEventListener("orientationchange", resizeCanvas);
 
     // Fullscreen button (mobile)
-    if (isMobile) {
-      const fsBtn = document.createElement("button");
-      fsBtn.innerText = "⛶";
-      fsBtn.style.position = "fixed";
-      fsBtn.style.bottom = "2vh";
-      fsBtn.style.right = "2vw";
-      fsBtn.style.width = "56px";
-      fsBtn.style.height = "56px";
-      fsBtn.style.fontSize = "2.2rem";
-      fsBtn.style.background = "#222";
-      fsBtn.style.color = "#fff";
-      fsBtn.style.border = "2px solid #fff";
-      fsBtn.style.borderRadius = "50%";
-      fsBtn.style.opacity = "0.85";
-      fsBtn.style.zIndex = "999999";
-      fsBtn.style.userSelect = "none";
-      fsBtn.style.touchAction = "none";
-      fsBtn.addEventListener("touchstart", e => {
-        e.preventDefault();
-        // Prefer fullscreen on canvas for Safari/iOS
-        const el = this.renderer.domElement;
-        if (el.requestFullscreen) el.requestFullscreen();
-        else if ((el as any).webkitRequestFullscreen) (el as any).webkitRequestFullscreen();
-        else if ((el as any).msRequestFullscreen) (el as any).msRequestFullscreen();
-      });
-      document.body.appendChild(fsBtn);
-    }
+    // RIMOSSO: non mostrare più il tasto fullscreen su mobile
 
     // Musica di sottofondo
     this.audio = new Audio("/music/background.mp3");
@@ -272,77 +246,95 @@ export class Game {
 
     // Mobile controller
     if (isMobile) {
+      // --- CONTROLLER MOBILE CUSTOM ---
       const controller = document.createElement("div");
       controller.id = "mobile-controller";
       controller.style.position = "fixed";
-      controller.style.right = "2vw";
+      controller.style.left = "2vw";
       controller.style.bottom = "10vh";
       controller.style.zIndex = "99999";
       controller.style.display = "flex";
-      controller.style.flexDirection = "column";
-      controller.style.alignItems = "center";
-      controller.style.gap = "2vw";
+      controller.style.flexDirection = "row";
+      controller.style.alignItems = "flex-end";
+      controller.style.gap = "4vw";
 
-      // Joystick (up, left, right, down)
-      const directions = [
-        { key: "w", label: "▲" },
-        { key: "a", label: "◀" },
-        { key: "s", label: "▼" },
-        { key: "d", label: "▶" }
-      ];
-      const joystick = document.createElement("div");
-      joystick.style.display = "grid";
-      joystick.style.gridTemplateColumns = "40px 40px 40px";
-      joystick.style.gridTemplateRows = "40px 40px 40px";
-      joystick.style.gap = "5px";
-      joystick.style.marginBottom = "10px";
+      // Knob analogico (tipo PlayStation)
+      const knobArea = document.createElement("div");
+      knobArea.style.position = "relative";
+      knobArea.style.width = "120px";
+      knobArea.style.height = "120px";
+      knobArea.style.background = "rgba(40,40,40,0.4)";
+      knobArea.style.borderRadius = "50%";
+      knobArea.style.touchAction = "none";
+      knobArea.style.marginBottom = "10px";
+      knobArea.style.marginRight = "10px";
+      knobArea.style.display = "flex";
+      knobArea.style.alignItems = "center";
+      knobArea.style.justifyContent = "center";
 
-      // Empty cells for grid
-      for (let i = 0; i < 9; i++) {
-        const btn = document.createElement("button");
-        btn.style.width = "40px";
-        btn.style.height = "40px";
-        btn.style.fontSize = "1.5rem";
-        btn.style.opacity = "0.8";
-        btn.style.background = "#222";
-        btn.style.color = "#fff";
-        btn.style.border = "2px solid #fff";
-        btn.style.borderRadius = "8px";
-        btn.style.touchAction = "none";
-        btn.style.userSelect = "none";
-        btn.style.webkitUserSelect = "none";
-        btn.style.outline = "none";
-        btn.style.transition = "background 0.2s";
-        btn.style.margin = "0";
-        btn.style.padding = "0";
-        btn.disabled = true;
-        btn.addEventListener("touchstart", e => e.preventDefault());
-        joystick.appendChild(btn);
-      }
-      // Up
-      joystick.children[1].innerHTML = "▲";
-      joystick.children[1].disabled = false;
-      joystick.children[1].addEventListener("touchstart", () => this.keys.add("w"));
-      joystick.children[1].addEventListener("touchend", () => this.keys.delete("w"));
-      // Left
-      joystick.children[3].innerHTML = "◀";
-      joystick.children[3].disabled = false;
-      joystick.children[3].addEventListener("touchstart", () => this.keys.add("a"));
-      joystick.children[3].addEventListener("touchend", () => this.keys.delete("a"));
-      // Down
-      joystick.children[7].innerHTML = "▼";
-      joystick.children[7].disabled = false;
-      joystick.children[7].addEventListener("touchstart", () => this.keys.add("s"));
-      joystick.children[7].addEventListener("touchend", () => this.keys.delete("s"));
-      // Right
-      joystick.children[5].innerHTML = "▶";
-      joystick.children[5].disabled = false;
-      joystick.children[5].addEventListener("touchstart", () => this.keys.add("d"));
-      joystick.children[5].addEventListener("touchend", () => this.keys.delete("d"));
+      const knob = document.createElement("div");
+      knob.style.width = "56px";
+      knob.style.height = "56px";
+      knob.style.background = "#222";
+      knob.style.border = "2px solid #fff";
+      knob.style.borderRadius = "50%";
+      knob.style.position = "absolute";
+      knob.style.left = "32px";
+      knob.style.top = "32px";
+      knob.style.transition = "left 0.1s, top 0.1s";
+      knobArea.appendChild(knob);
 
-      controller.appendChild(joystick);
+      let knobActive = false;
+      let knobStart = { x: 0, y: 0 };
+      let knobDir = { x: 0, y: 0 };
 
-      // Jump button
+      knobArea.addEventListener("touchstart", (e) => {
+        knobActive = true;
+        const touch = e.touches[0];
+        knobStart = { x: touch.clientX, y: touch.clientY };
+      });
+      knobArea.addEventListener("touchmove", (e) => {
+        if (!knobActive) return;
+        const touch = e.touches[0];
+        const dx = touch.clientX - knobStart.x;
+        const dy = touch.clientY - knobStart.y;
+        const dist = Math.min(Math.sqrt(dx * dx + dy * dy), 40);
+        const angle = Math.atan2(dy, dx);
+        const x = Math.cos(angle) * dist;
+        const y = Math.sin(angle) * dist;
+        knob.style.left = `${32 + x}px`;
+        knob.style.top = `${32 + y}px`;
+        knobDir = { x: x / 40, y: y / 40 };
+        // Movimento: avanti/indietro/rotazione
+        if (Math.abs(knobDir.y) > 0.3) {
+          if (knobDir.y < 0) this.keys.add("w");
+          else this.keys.add("s");
+        } else {
+          this.keys.delete("w");
+          this.keys.delete("s");
+        }
+        if (Math.abs(knobDir.x) > 0.3) {
+          if (knobDir.x < 0) this.keys.add("a");
+          else this.keys.add("d");
+        } else {
+          this.keys.delete("a");
+          this.keys.delete("d");
+        }
+      });
+      knobArea.addEventListener("touchend", () => {
+        knobActive = false;
+        knob.style.left = "32px";
+        knob.style.top = "32px";
+        knobDir = { x: 0, y: 0 };
+        this.keys.delete("w");
+        this.keys.delete("a");
+        this.keys.delete("s");
+        this.keys.delete("d");
+      });
+
+      controller.appendChild(knobArea);
+
+      // Jump button a sinistra
       const jumpBtn = document.createElement("button");
       jumpBtn.innerText = "⤒";
       jumpBtn.style.width = "60px";
@@ -356,7 +348,7 @@ export class Game {
       jumpBtn.style.touchAction = "none";
       jumpBtn.style.userSelect = "none";
       jumpBtn.style.outline = "none";
-      jumpBtn.style.marginTop = "10px";
+      jumpBtn.style.marginBottom = "10px";
       jumpBtn.addEventListener("touchstart", e => {
         e.preventDefault();
         this.keys.add(" ");
@@ -368,28 +360,28 @@ export class Game {
 
       document.body.appendChild(controller);
 
-      // Camera swipe (mobile)
-      let lastTouchX: number | null = null;
-      let isSwiping = false;
-      const swipeArea = this.renderer.domElement;
-      swipeArea.addEventListener("touchstart", (e) => {
+      // Se tocco lo schermo e trascino in avanti, cammina dritto (come mouse sx+dx)
+      let screenTouchActive = false;
+      let screenTouchStartY = 0;
+      this.renderer.domElement.addEventListener("touchstart", (e) => {
         if (e.touches.length === 1) {
-          lastTouchX = e.touches[0].clientX;
-          isSwiping = true;
+          screenTouchActive = true;
+          screenTouchStartY = e.touches[0].clientY;
         }
       });
-      swipeArea.addEventListener("touchmove", (e) => {
-        if (isSwiping && e.touches.length === 1 && lastTouchX !== null) {
-          e.preventDefault();
-          const dx = e.touches[0].clientX - lastTouchX;
-          lastTouchX = e.touches[0].clientX;
-          // Sensibilità swipe (più basso = più sensibile)
-          this.cameraControl.rotation.y -= dx * 0.008;
+      this.renderer.domElement.addEventListener("touchmove", (e) => {
+        if (screenTouchActive) {
+          const dy = e.touches[0].clientY - screenTouchStartY;
+          if (Math.abs(dy) > 30) {
+            this.mouseLeftDown = true;
+            this.rightMouseDown = true;
+          }
         }
-      }, { passive: false });
-      swipeArea.addEventListener("touchend", () => {
-        isSwiping = false;
-        lastTouchX = null;
+      });
+      this.renderer.domElement.addEventListener("touchend", () => {
+        screenTouchActive = false;
+        this.mouseLeftDown = false;
+        this.rightMouseDown = false;
       });
     }
   }

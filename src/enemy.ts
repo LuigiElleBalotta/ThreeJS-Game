@@ -50,6 +50,17 @@ export class Enemy {
     if (this.hp <= 0) this.alive = false;
   }
 
+  getBoundingBox(pos?: THREE.Vector3) {
+    // Calcola la bounding box reale del modello enemy
+    const box = new THREE.Box3().setFromObject(this.mesh);
+    if (pos) {
+      const size = box.getSize(new THREE.Vector3());
+      box.min.copy(pos).add(box.min.clone().sub(this.mesh.position));
+      box.max.copy(box.min).add(size);
+    }
+    return box;
+  }
+
   update(player: Player) {
     if (this.mixer) {
       this.mixer.update(1 / 60);

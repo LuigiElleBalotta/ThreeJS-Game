@@ -28,6 +28,10 @@ export class Game {
   frames: number = 0;
   fps: number = 0;
 
+  audio: HTMLAudioElement;
+  audioStarted: boolean = false;
+  mousePos = { x: 0, y: 0 };
+
   constructor() {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x87ceeb);
@@ -141,6 +145,22 @@ export class Game {
       });
       document.body.appendChild(fsBtn);
     }
+
+    // Musica di sottofondo
+    this.audio = new Audio("/music/background.mp3");
+    this.audio.loop = true;
+    this.audio.volume = 0.2;
+
+    // Avvia la musica al primo input utente
+    const startAudio = () => {
+      if (!this.audioStarted) {
+        this.audio.play();
+        this.audioStarted = true;
+      }
+    };
+    window.addEventListener("keydown", startAudio, { once: true });
+    window.addEventListener("mousedown", startAudio, { once: true });
+    window.addEventListener("touchstart", startAudio, { once: true });
 
     this.initWorld();
 
@@ -415,6 +435,16 @@ export class Game {
 
     this.loaderDiv.style.display = "none";
     this.animate();
+
+    // Gestione cursore custom: aggiorna anche se la camera si muove
+    window.addEventListener("mousemove", (event) => {
+      const rect = this.renderer.domElement.getBoundingClientRect();
+      this.mousePos.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      this.mousePos.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    });
+
+    // Imposta cursore di default all'avvio
+    document.body.style.cursor = "url('/cursors/Pointer_gauntlet_on_32x32.cur'), auto";
   }
 
   handleAttack() {
@@ -466,6 +496,27 @@ export class Game {
         this.fpsDiv.innerText = `FPS: ${this.fps}`;
         this.lastFpsUpdate = now;
         this.frames = 0;
+      }
+    }
+
+    // Aggiorna cursore anche se la camera si muove
+    {
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(this.mousePos, this.camera);
+
+      let found = false;
+      for (const enemy of this.enemies) {
+        if (!enemy.isAlive()) continue;
+        const intersects = raycaster.intersectObject(enemy.mesh, true);
+        if (intersects.length > 0) {
+          found = true;
+          break;
+        }
+      }
+      if (found) {
+        document.body.style.cursor = "url('/cursors/Pointer_sword_on_32x32.cur'), auto";
+      } else {
+        document.body.style.cursor = "url('/cursors/Pointer_gauntlet_on_32x32.cur'), auto";
       }
     }
 

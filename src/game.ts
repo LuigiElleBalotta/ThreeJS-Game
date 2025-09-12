@@ -133,7 +133,8 @@ export class Game {
       fsBtn.style.touchAction = "none";
       fsBtn.addEventListener("touchstart", e => {
         e.preventDefault();
-        const el = document.documentElement;
+        // Prefer fullscreen on canvas for Safari/iOS
+        const el = this.renderer.domElement;
         if (el.requestFullscreen) el.requestFullscreen();
         else if ((el as any).webkitRequestFullscreen) (el as any).webkitRequestFullscreen();
         else if ((el as any).msRequestFullscreen) (el as any).msRequestFullscreen();
@@ -253,12 +254,13 @@ export class Game {
       });
       swipeArea.addEventListener("touchmove", (e) => {
         if (isSwiping && e.touches.length === 1 && lastTouchX !== null) {
+          e.preventDefault();
           const dx = e.touches[0].clientX - lastTouchX;
           lastTouchX = e.touches[0].clientX;
           // Sensibilità swipe (più basso = più sensibile)
           this.cameraControl.rotation.y -= dx * 0.008;
         }
-      });
+      }, { passive: false });
       swipeArea.addEventListener("touchend", () => {
         isSwiping = false;
         lastTouchX = null;

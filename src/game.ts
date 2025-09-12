@@ -198,13 +198,18 @@ export class Game {
           // Click desktop
           slots[i].addEventListener("click", (e) => {
             e.stopPropagation();
-            this.castSpell(i);
+            this.castSpell(i + 1);
           }, { passive: false });
           // Tap mobile: usa pointerdown per compatibilità massima
           slots[i].addEventListener("pointerdown", (e) => {
             e.stopPropagation();
             e.preventDefault();
-            this.castSpell(i);
+            this.castSpell(i + 1);
+          }, { passive: false });
+          // Touchend mobile: rimuove focus e previene doppio trigger
+          slots[i].addEventListener("touchend", (e) => {
+            e.stopPropagation();
+            e.preventDefault();
           }, { passive: false });
           // Assicura che pointer-events sia attivo
           (slots[i] as HTMLElement).style.pointerEvents = "auto";
@@ -338,11 +343,15 @@ export class Game {
       let knobDir = { x: 0, y: 0 };
 
       knobArea.addEventListener("touchstart", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
         knobActive = true;
         const touch = e.touches[0];
         knobStart = { x: touch.clientX, y: touch.clientY };
       });
       knobArea.addEventListener("touchmove", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
         if (!knobActive) return;
         const touch = e.touches[0];
         const dx = touch.clientX - knobStart.x;
@@ -370,7 +379,9 @@ export class Game {
           this.keys.delete("d");
         }
       });
-      knobArea.addEventListener("touchend", () => {
+      knobArea.addEventListener("touchend", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
         knobActive = false;
         knob.style.left = "32px";
         knob.style.top = "32px";

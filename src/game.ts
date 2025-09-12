@@ -250,7 +250,7 @@ export class Game {
       const controller = document.createElement("div");
       controller.id = "mobile-controller";
       controller.style.position = "fixed";
-      controller.style.left = "2vw";
+      controller.style.right = "2vw";
       controller.style.bottom = "10vh";
       controller.style.zIndex = "99999";
       controller.style.display = "flex";
@@ -258,7 +258,31 @@ export class Game {
       controller.style.alignItems = "flex-end";
       controller.style.gap = "4vw";
 
-      // Knob analogico (tipo PlayStation)
+      // Jump button a sinistra
+      const jumpBtn = document.createElement("button");
+      jumpBtn.innerText = "⤒";
+      jumpBtn.style.width = "60px";
+      jumpBtn.style.height = "60px";
+      jumpBtn.style.fontSize = "2rem";
+      jumpBtn.style.opacity = "0.9";
+      jumpBtn.style.background = "#ff0060";
+      jumpBtn.style.color = "#fff";
+      jumpBtn.style.border = "2px solid #fff";
+      jumpBtn.style.borderRadius = "50%";
+      jumpBtn.style.touchAction = "none";
+      jumpBtn.style.userSelect = "none";
+      jumpBtn.style.outline = "none";
+      jumpBtn.style.marginBottom = "10px";
+      jumpBtn.addEventListener("touchstart", e => {
+        e.preventDefault();
+        this.keys.add(" ");
+        this.player && this.player.jump();
+      });
+      jumpBtn.addEventListener("touchend", () => this.keys.delete(" "));
+
+      controller.appendChild(jumpBtn);
+
+      // Knob analogico (tipo PlayStation) a destra
       const knobArea = document.createElement("div");
       knobArea.style.position = "relative";
       knobArea.style.width = "120px";
@@ -267,7 +291,7 @@ export class Game {
       knobArea.style.borderRadius = "50%";
       knobArea.style.touchAction = "none";
       knobArea.style.marginBottom = "10px";
-      knobArea.style.marginRight = "10px";
+      knobArea.style.marginLeft = "10px";
       knobArea.style.display = "flex";
       knobArea.style.alignItems = "center";
       knobArea.style.justifyContent = "center";
@@ -334,54 +358,30 @@ export class Game {
 
       controller.appendChild(knobArea);
 
-      // Jump button a sinistra
-      const jumpBtn = document.createElement("button");
-      jumpBtn.innerText = "⤒";
-      jumpBtn.style.width = "60px";
-      jumpBtn.style.height = "60px";
-      jumpBtn.style.fontSize = "2rem";
-      jumpBtn.style.opacity = "0.9";
-      jumpBtn.style.background = "#ff0060";
-      jumpBtn.style.color = "#fff";
-      jumpBtn.style.border = "2px solid #fff";
-      jumpBtn.style.borderRadius = "50%";
-      jumpBtn.style.touchAction = "none";
-      jumpBtn.style.userSelect = "none";
-      jumpBtn.style.outline = "none";
-      jumpBtn.style.marginBottom = "10px";
-      jumpBtn.addEventListener("touchstart", e => {
-        e.preventDefault();
-        this.keys.add(" ");
-        this.player && this.player.jump();
-      });
-      jumpBtn.addEventListener("touchend", () => this.keys.delete(" "));
-
-      controller.appendChild(jumpBtn);
-
       document.body.appendChild(controller);
 
-      // Se tocco lo schermo e trascino in avanti, cammina dritto (come mouse sx+dx)
-      let screenTouchActive = false;
-      let screenTouchStartY = 0;
-      this.renderer.domElement.addEventListener("touchstart", (e) => {
+      // Swipe sulla canvas: solo rotazione camera, nessun movimento player
+      let lastTouchX: number | null = null;
+      let isSwiping = false;
+      const swipeArea = this.renderer.domElement;
+      swipeArea.addEventListener("touchstart", (e) => {
         if (e.touches.length === 1) {
-          screenTouchActive = true;
-          screenTouchStartY = e.touches[0].clientY;
+          lastTouchX = e.touches[0].clientX;
+          isSwiping = true;
         }
       });
-      this.renderer.domElement.addEventListener("touchmove", (e) => {
-        if (screenTouchActive) {
-          const dy = e.touches[0].clientY - screenTouchStartY;
-          if (Math.abs(dy) > 30) {
-            this.mouseLeftDown = true;
-            this.rightMouseDown = true;
-          }
+      swipeArea.addEventListener("touchmove", (e) => {
+        if (isSwiping && e.touches.length === 1 && lastTouchX !== null) {
+          e.preventDefault();
+          const dx = e.touches[0].clientX - lastTouchX;
+          lastTouchX = e.touches[0].clientX;
+          // Sensibilità swipe (più basso = più sensibile)
+          this.cameraControl.rotation.y -= dx * 0.008;
         }
-      });
-      this.renderer.domElement.addEventListener("touchend", () => {
-        screenTouchActive = false;
-        this.mouseLeftDown = false;
-        this.rightMouseDown = false;
+      }, { passive: false });
+      swipeArea.addEventListener("touchend", () => {
+        isSwiping = false;
+        lastTouchX = null;
       });
     }
   }

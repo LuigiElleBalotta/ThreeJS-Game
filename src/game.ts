@@ -321,6 +321,7 @@ export class Game {
       knobArea.style.display = "flex";
       knobArea.style.alignItems = "center";
       knobArea.style.justifyContent = "center";
+      knobArea.style.zIndex = "100000";
 
       controller.appendChild(jumpBtn);
       controller.appendChild(knobArea);

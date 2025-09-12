@@ -90,6 +90,7 @@ export class Enemy {
         const now = Date.now();
         if (now - this.lastAttack > this.cooldown) {
           player.takeDamage(this.damage);
+          window.dispatchEvent(new CustomEvent("playerDamage", { detail: { amount: this.damage, sourceEnemy: this } }));
           this.lastAttack = now;
         }
       }

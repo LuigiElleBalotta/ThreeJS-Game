@@ -37,6 +37,12 @@ export class Game {
   spellCooldown: number = 0;
   spellLastCast: number = 0;
 
+  enemyBarDiv: HTMLDivElement | null = null;
+
+  lastCombatTime: number = 0;
+  lastLogTime: number = 0;
+  lastHpRegenTime: number = 0;
+
   constructor() {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x87ceeb);
@@ -183,7 +189,32 @@ export class Game {
       if (key === "9") this.castSpell(8);
       if (key === "0") this.castSpell(9);
       if (key === "-") this.castSpell(10);
+      if (key === "Escape" && this.selectedEnemy) {
+        this.selectedEnemy = null;
+      }
     });
+
+    // Barra vita nemico selezionato in alto a destra
+    this.enemyBarDiv = document.createElement("div");
+    this.enemyBarDiv.style.position = "fixed";
+    this.enemyBarDiv.style.top = "32px";
+    this.enemyBarDiv.style.right = "32px";
+    this.enemyBarDiv.style.width = "320px";
+    this.enemyBarDiv.style.height = "48px";
+    this.enemyBarDiv.style.background = "rgba(30,30,30,0.92)";
+    this.enemyBarDiv.style.border = "2px solid #fff";
+    this.enemyBarDiv.style.borderRadius = "12px";
+    this.enemyBarDiv.style.display = "none";
+    this.enemyBarDiv.style.zIndex = "10002";
+    this.enemyBarDiv.style.boxShadow = "0 2px 12px #000";
+    this.enemyBarDiv.innerHTML = `
+      <div id="enemy-bar-name" style="color:#fff;font-weight:bold;font-size:1.1rem;padding:4px 0 0 16px;"></div>
+      <div style="width:90%;height:18px;background:#333;border-radius:8px;margin:4px auto 0 auto;position:relative;">
+        <div id="enemy-bar-hp" style="height:100%;background:#ff0060;border-radius:8px;width:100%;transition:width 0.2s;"></div>
+        <div id="enemy-bar-hp-text" style="position:absolute;left:50%;top:0;transform:translateX(-50%);color:#fff;font-size:1rem;font-weight:bold;text-shadow:0 0 4px #000;">HP</div>
+      </div>
+    `;
+    document.body.appendChild(this.enemyBarDiv);
 
     // Click manuale sull'ultimo slot
     setTimeout(() => {
@@ -199,6 +230,13 @@ export class Game {
     // Mostra testo danno subito
     window.addEventListener("playerDamage", (e: any) => {
       const amount = e.detail.amount;
+      // Combat timer: resetta ogni danno subito
+      this.lastCombatTime = performance.now();
+      console.log("lastCombatTime aggiornato: playerDamage", this.lastCombatTime);
+      // Se chi ha inflitto il danno è noto e non è già selezionato, selezionalo
+      if (e.detail && e.detail.sourceEnemy && (!this.selectedEnemy || this.selectedEnemy !== e.detail.sourceEnemy)) {
+        this.selectedEnemy = e.detail.sourceEnemy;
+      }
       const div = document.createElement("div");
       div.innerText = `-${amount}`;
       div.style.position = "fixed";
@@ -362,21 +400,163 @@ export class Game {
     // Solo slot 0 (tasto 1) attivo per ora
     if (slot !== 0) return;
     const now = performance.now();
-    if (now - this.spellLastCast < 1000) return; // cooldown 1s
-    this.spellLastCast = now;
+    if (now - this.spellLastCast < 1000) return;
 
-    // Serve un enemy selezionato, vivo e vicino (<3.5)
-    if (
-      this.selectedEnemy &&
-      this.selectedEnemy.isAlive() &&
-      this.player.mesh.position.distanceTo(this.selectedEnemy.mesh.position) < 3.5
-    ) {
-      this.selectedEnemy.takeDamage(this.player.attackDamage);
-      // Se muore, rimuovi dalla scena e deseleziona
-      if (!this.selectedEnemy.isAlive()) {
-        this.scene.remove(this.selectedEnemy.mesh);
-        this.selectedEnemy = null;
+    // Spellbar slot 0
+    const spellbar = document.getElementById("spellbar");
+    let slots: HTMLCollectionOf<Element> | null = null;
+    if (spellbar) slots = spellbar.getElementsByClassName("spell-slot");
+
+    // Funzione overlay cooldown SVG
+    function showCooldownOverlay(slotElem: Element) {
+      let svg = slotElem.querySelector("svg.cooldown-svg") as SVGSVGElement;
+      if (!svg) {
+        svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.classList.add("cooldown-svg");
+        svg.setAttribute("width", "56");
+        svg.setAttribute("height", "56");
+        svg.style.position = "absolute";
+        svg.style.left = "0";
+        svg.style.top = "0";
+        svg.style.width = "100%";
+        svg.style.height = "100%";
+        svg.style.pointerEvents = "none";
+        svg.style.zIndex = "3";
+        slotElem.appendChild(svg);
+        slotElem.setAttribute("style", (slotElem.getAttribute("style") || "") + ";position:relative;");
       }
+      svg.innerHTML = "";
+      // Cerchio scuro di base
+      let bg = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      bg.setAttribute("cx", "28");
+      bg.setAttribute("cy", "28");
+      bg.setAttribute("r", "26");
+      bg.setAttribute("fill", "rgba(0,0,0,0.55)");
+      svg.appendChild(bg);
+
+      // Cerchio animato (cooldown)
+      let arc = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      arc.setAttribute("fill", "#222");
+      arc.setAttribute("opacity", "0.85");
+      svg.appendChild(arc);
+
+      let start = performance.now();
+      function animate() {
+        let t = (performance.now() - start) / 1000;
+        if (t > 1) t = 1;
+        // Angolo da 0 a 2PI*(1-t)
+        const angle = 2 * Math.PI * (1 - t);
+        const x = 28 + 26 * Math.sin(angle);
+        const y = 28 - 26 * Math.cos(angle);
+        const largeArc = angle < Math.PI ? 0 : 1;
+        const d = `
+          M 28 2
+          A 26 26 0 ${largeArc} 1 ${x} ${y}
+          L 28 28 Z
+        `;
+        arc.setAttribute("d", d);
+        arc.setAttribute("opacity", `${0.85 * (1 - t)}`);
+        if (t < 1) requestAnimationFrame(animate);
+        else svg.remove();
+      }
+      animate();
+    }
+
+    // Messaggio sopra spellbar
+    function showSpellMsg(msg: string) {
+      let el = document.getElementById("spellbar-msg");
+      if (!el) {
+        el = document.createElement("div");
+        el.id = "spellbar-msg";
+        el.style.position = "fixed";
+        el.style.left = "50%";
+        el.style.bottom = "90px";
+        el.style.transform = "translateX(-50%)";
+        el.style.background = "#222";
+        el.style.color = "#fff";
+        el.style.fontWeight = "bold";
+        el.style.fontSize = "1.2rem";
+        el.style.padding = "8px 24px";
+        el.style.borderRadius = "10px";
+        el.style.zIndex = "10001";
+        el.style.boxShadow = "0 2px 12px #000";
+        document.body.appendChild(el);
+      }
+      el.innerText = msg;
+      el.style.opacity = "1";
+      el.style.display = "block";
+      setTimeout(() => {
+        el.style.opacity = "0";
+        setTimeout(() => { el.style.display = "none"; }, 400);
+      }, 1000);
+    }
+
+    // Validazione nemico selezionato e distanza
+    if (!this.selectedEnemy || !this.selectedEnemy.isAlive()) {
+      showSpellMsg("No enemy selected");
+      return;
+    }
+    if (this.player.mesh.position.distanceTo(this.selectedEnemy.mesh.position) >= 3.5) {
+      showSpellMsg("Too far away");
+      return;
+    }
+
+    // Mostra overlay cooldown SVG SOLO se la spell parte
+    if (slots && slots.length > 0) showCooldownOverlay(slots[0]);
+    this.spellLastCast = now;
+    // Combat timer: resetta ogni attacco
+    this.lastCombatTime = performance.now();
+    console.log("lastCombatTime aggiornato: castSpell", this.lastCombatTime);
+
+    // Calcolo critico: 10% chance
+    let isCrit = Math.random() < 0.1;
+    let dmg = this.player.attackDamage * (isCrit ? 2 : 1);
+
+    // Mostra danno inflitto in bianco sopra il nemico
+    const div = document.createElement("div");
+    div.innerText = isCrit ? `CRIT -${dmg}` : `-${dmg}`;
+    div.style.position = "fixed";
+    div.style.color = "#fff";
+    div.style.fontWeight = "bold";
+    div.style.fontSize = isCrit ? "44px" : "28px";
+    div.style.pointerEvents = "none";
+    div.style.textShadow = "0 0 12px #000, 0 0 2px #fff";
+    div.style.zIndex = "99999";
+    div.style.padding = "2px 14px";
+    div.style.borderRadius = "10px";
+    div.style.background = "rgba(0,0,0,0.15)";
+    if (isCrit) div.style.letterSpacing = "2px";
+    document.body.appendChild(div);
+    // Angolo random per effetto circolare
+    const angle = Math.random() * Math.PI * 2;
+    const enemy = this.selectedEnemy;
+    let alive = true;
+    const updateDmg = () => {
+      if (!enemy.mesh.parent || !alive) { div.remove(); return; }
+      const pos = enemy.mesh.position.clone();
+      pos.y += 2.2;
+      const vector = pos.project(this.camera);
+      const t = (performance.now() - now) / 1000;
+      const radius = 60;
+      const theta = angle + t * Math.PI;
+      const x = (vector.x * 0.5 + 0.5) * window.innerWidth + Math.cos(theta) * radius;
+      const y = (-vector.y * 0.5 + 0.5) * window.innerHeight + Math.sin(theta) * radius;
+      div.style.left = `${x}px`;
+      div.style.top = `${y}px`;
+      div.style.opacity = `${1 - t}`;
+      if (t < 1) requestAnimationFrame(updateDmg);
+      else div.remove();
+    };
+    const now2 = performance.now();
+    updateDmg();
+
+    this.selectedEnemy.takeDamage(dmg);
+    // Se muore, rimuovi dalla scena e deseleziona e rimuovi subito il danno
+    if (!this.selectedEnemy.isAlive()) {
+      this.scene.remove(this.selectedEnemy.mesh);
+      this.selectedEnemy = null;
+      alive = false;
+      div.remove();
     }
   }
 
@@ -566,16 +746,19 @@ export class Game {
       this.hbAbove.push(new HealthBarAbove(enemy,this.camera));
     }
 
-    this.ui.updatePlayerHealth(this.player.hp);
+    this.ui.updatePlayerHealth(this.player.hp, this.player.mana ?? 100, this.player.maxHp ?? 100, this.player.maxMana ?? 100);
   }
 
   animate = () => {
+    console.log("ANIMATE FRAME");
     requestAnimationFrame(this.animate);
 
     const delta = this.clock.getDelta();
 
     if(!this.player.isAlive()){
       this.ui.showGameOver(()=>this.reset());
+      // DEBUG: player morto, interrompo animate
+      console.log("ANIMATE STOP: player morto, hp:", this.player.hp);
       return;
     }
 
@@ -593,6 +776,10 @@ export class Game {
 
     // Aggiorna posizione e animazione dei testi danno
     const now = performance.now();
+
+    // Logga ANIMATE FRAME e now ogni ciclo
+    // console.log("ANIMATE FRAME", now);
+
     this.damageTexts = this.damageTexts.filter(({ div, start, angle }) => {
       const t = (now - start) / 1000;
       if (t > 1) {
@@ -613,6 +800,56 @@ export class Game {
       div.style.opacity = `${1 - t}`;
       return true;
     });
+
+    // --- Spostato fuori dal filter ---
+    // Rigenerazione hp/mana (al secondo, non per tick)
+    const maxHp = this.player.maxHp ?? 100;
+    const maxMana = this.player.maxMana ?? 100;
+    const isOutOfCombat = (now - this.lastCombatTime > 5000);
+
+    // Logga isOutOfCombat ogni 2 secondi
+    if (!this.lastLogTime) this.lastLogTime = now;
+    if (now - this.lastLogTime > 2000) {
+      console.log("isOutOfCombat", isOutOfCombat);
+      this.lastLogTime = now;
+    }
+
+    // HP: solo fuori combattimento, recupero ogni 3 secondi
+    if (isOutOfCombat && this.player.hp < maxHp) {
+      if (!this.lastHpRegenTime) this.lastHpRegenTime = now;
+      if (now - this.lastHpRegenTime > 3000) {
+        const hpRegen = Math.ceil(maxHp * 0.03);
+        this.player.hp = Math.min(this.player.hp + hpRegen, maxHp);
+        this.lastHpRegenTime = now;
+      }
+    } else {
+      this.lastHpRegenTime = now;
+    }
+    // Mana: 10% fuori combattimento, 2% in combattimento (al secondo)
+    const manaRegenRate = isOutOfCombat ? 0.10 : 0.02;
+    if (this.player.mana < maxMana) {
+      const manaRegen = Math.ceil(maxMana * manaRegenRate * delta);
+      this.player.mana = Math.min(this.player.mana + manaRegen, maxMana);
+    }
+
+    // Aggiorna barra vita nemico selezionato
+    if (this.enemyBarDiv) {
+      if (this.selectedEnemy && this.selectedEnemy.isAlive()) {
+        this.enemyBarDiv.style.display = "block";
+        const nameDiv = this.enemyBarDiv.querySelector("#enemy-bar-name") as HTMLDivElement;
+        const hpDiv = this.enemyBarDiv.querySelector("#enemy-bar-hp") as HTMLDivElement;
+        const hpText = this.enemyBarDiv.querySelector("#enemy-bar-hp-text") as HTMLDivElement;
+        if (nameDiv) nameDiv.innerText = "Enemy";
+        if (hpDiv && hpText) {
+          const hp = Math.max(0, this.selectedEnemy.hp);
+          const maxHp = this.selectedEnemy.maxHp || 100;
+          hpDiv.style.width = `${(hp / maxHp) * 100}%`;
+          hpText.innerText = `${hp} / ${maxHp}`;
+        }
+      } else {
+        this.enemyBarDiv.style.display = "none";
+      }
+    }
 
     // Aggiorna cursore anche se la camera si muove
     {
@@ -748,7 +985,7 @@ export class Game {
     this.enemies.forEach(e=>e.update(this.player));
     this.hbAbove.forEach(h=>h.update());
 
-    this.ui.updatePlayerHealth(this.player.hp);
+    this.ui.updatePlayerHealth(this.player.hp, this.player.mana, this.player.maxHp, this.player.maxMana);
 
     this.cameraControl.update();
     this.camera.lookAt(this.player.mesh.position);

@@ -5,9 +5,12 @@ import type { GLTF } from "three/examples/jsm/loaders/GLTFLoader";
 import { AnimationMixer, AnimationAction } from "three";
 
 export class Player {
+  maxHp: number = 100;
+  hp: number = this.maxHp;
+  maxMana: number = 100;
+  mana: number = this.maxMana;
   mesh: THREE.Mesh;
   speed: number = 0.1;
-  hp: number = 100;
 
   velocityY: number = 0;
   isOnGround: boolean = true;

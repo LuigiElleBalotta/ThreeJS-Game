@@ -196,9 +196,13 @@ export class Game {
         const slots = spellbar.getElementsByClassName("spell-slot");
         for (let i = 0; i < slots.length; i++) {
           // Click desktop
-          slots[i].addEventListener("click", () => this.castSpell(i));
-          // Tap mobile
-          slots[i].addEventListener("touchstart", (e) => {
+          slots[i].addEventListener("click", (e) => {
+            e.stopPropagation();
+            this.castSpell(i);
+          });
+          // Tap mobile: usa pointerdown per compatibilità massima
+          slots[i].addEventListener("pointerdown", (e) => {
+            e.stopPropagation();
             e.preventDefault();
             this.castSpell(i);
           });
@@ -248,6 +252,13 @@ export class Game {
         }
       }
       this.selectedEnemy = found;
+    });
+
+    // Selezione nemico tramite healthbar (click/tap)
+    window.addEventListener("selectEnemy", (e: any) => {
+      if (e.detail && e.detail.enemy) {
+        this.selectedEnemy = e.detail.enemy;
+      }
     });
 
     // Mobile controller

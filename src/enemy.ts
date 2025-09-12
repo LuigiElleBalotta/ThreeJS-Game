@@ -36,7 +36,7 @@ export class Enemy {
     this.healthBarDiv.style.border = "1px solid #fff";
     this.healthBarDiv.style.borderRadius = "6px";
     this.healthBarDiv.style.overflow = "hidden";
-    this.healthBarDiv.style.pointerEvents = "none";
+    this.healthBarDiv.style.pointerEvents = "auto";
     this.healthBarDiv.style.zIndex = "10000";
     this.healthBarDiv.style.display = "block";
     this.healthBarInner = document.createElement("div");
@@ -47,6 +47,17 @@ export class Enemy {
     this.healthBarInner.style.width = "100%";
     this.healthBarDiv.appendChild(this.healthBarInner);
     document.body.appendChild(this.healthBarDiv);
+
+    // Selezione nemico tramite click/tap sulla healthbar
+    this.healthBarDiv.addEventListener("click", (e) => {
+      e.stopPropagation();
+      window.dispatchEvent(new CustomEvent("selectEnemy", { detail: { enemy: this } }));
+    });
+    this.healthBarDiv.addEventListener("pointerdown", (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      window.dispatchEvent(new CustomEvent("selectEnemy", { detail: { enemy: this } }));
+    });
 
     if (prefab) {
       // Use local clone util for proper skinning/animation support

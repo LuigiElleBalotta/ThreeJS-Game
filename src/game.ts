@@ -402,12 +402,28 @@ export class Game {
       let isSwiping = false;
       const swipeArea = this.renderer.domElement;
       swipeArea.addEventListener("touchstart", (e) => {
+        // Ignora se il target è knobArea o spellbar o figli
+        const target = e.target as HTMLElement;
+        if (
+          target.closest("#mobile-controller") ||
+          target.closest("#spellbar")
+        ) {
+          return;
+        }
         if (e.touches.length === 1) {
           lastTouchX = e.touches[0].clientX;
           isSwiping = true;
         }
       });
       swipeArea.addEventListener("touchmove", (e) => {
+        // Ignora se il target è knobArea o spellbar o figli
+        const target = e.target as HTMLElement;
+        if (
+          target.closest("#mobile-controller") ||
+          target.closest("#spellbar")
+        ) {
+          return;
+        }
         if (isSwiping && e.touches.length === 1 && lastTouchX !== null) {
           e.preventDefault();
           const dx = e.touches[0].clientX - lastTouchX;

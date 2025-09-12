@@ -198,7 +198,7 @@ export class Game {
           // Click desktop
           slots[i].addEventListener("click", (e) => {
             e.stopPropagation();
-            this.castSpell(i + 1);
+            this.castSpell(i);
           }, { passive: false });
           // Tap mobile: usa pointerdown per compatibilità massima
           slots[i].addEventListener("pointerdown", (e) => {
@@ -401,6 +401,8 @@ export class Game {
       let lastTouchX: number | null = null;
       let isSwiping = false;
       const swipeArea = this.renderer.domElement;
+      // RIMUOVI il blocco globale degli eventi touch su spellbar e controller mobile
+
       swipeArea.addEventListener("touchstart", (e) => {
         // Ignora se il target è knobArea o spellbar o figli
         const target = e.target as HTMLElement;
@@ -416,14 +418,6 @@ export class Game {
         }
       });
       swipeArea.addEventListener("touchmove", (e) => {
-        // Ignora se il target è knobArea o spellbar o figli
-        const target = e.target as HTMLElement;
-        if (
-          target.closest("#mobile-controller") ||
-          target.closest("#spellbar")
-        ) {
-          return;
-        }
         if (isSwiping && e.touches.length === 1 && lastTouchX !== null) {
           e.preventDefault();
           const dx = e.touches[0].clientX - lastTouchX;

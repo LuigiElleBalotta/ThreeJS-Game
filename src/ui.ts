@@ -70,6 +70,7 @@ export class UI {
       slot.style.justifyContent = "center";
       slot.style.fontSize = "1.5rem";
       slot.style.color = "#fff";
+      slot.dataset.index = (i+1).toString();
       slot.textContent = "";
       if (i === 0) {
         const icon = document.createElement("img");

@@ -222,16 +222,18 @@ export class Game {
           slot.style.display = "flex";
           slot.style.alignItems = "center";
           slot.style.justifyContent = "center";
+          const idxFromData = slot.dataset.index ? parseInt(slot.dataset.index) : 1;
           slot.addEventListener("click", (e) => {
             console.log("CLICK spell-slot", i + 1, e.type, e, slot);
             e.stopPropagation();
-            this.castSpell(i + 1);
+            this.castSpell(idxFromData);
           }, { passive: false });
           slot.addEventListener("pointerdown", (e) => {
             console.log("POINTERDOWN spell-slot", i + 1, e.type, e, slot);
             e.stopPropagation();
             e.preventDefault();
-            this.castSpell(i + 1);
+            console.log('CAST SPELL SLOT', idxFromData);
+            this.castSpell(idxFromData);
           }, { passive: false });
           slot.addEventListener("touchend", (e) => {
             console.log("TOUCHEND spell-slot", i + 1, e.type, e, slot);

@@ -193,26 +193,29 @@ export class Game {
     setTimeout(() => {
       const spellbar = document.getElementById("spellbar");
       if (spellbar) {
+        spellbar.style.pointerEvents = "auto";
+        spellbar.style.zIndex = "100001";
         const slots = spellbar.getElementsByClassName("spell-slot");
         for (let i = 0; i < slots.length; i++) {
-          // Click desktop
-          slots[i].addEventListener("click", (e) => {
+          const slot = slots[i] as HTMLElement;
+          slot.style.pointerEvents = "auto";
+          slot.style.zIndex = "100002";
+          slot.addEventListener("click", (e) => {
+            console.log("CLICK spell-slot", i + 1, e.type, e, slot);
             e.stopPropagation();
-            this.castSpell(i);
+            this.castSpell(i + 1);
           }, { passive: false });
-          // Tap mobile: usa pointerdown per compatibilità massima
-          slots[i].addEventListener("pointerdown", (e) => {
+          slot.addEventListener("pointerdown", (e) => {
+            console.log("POINTERDOWN spell-slot", i + 1, e.type, e, slot);
             e.stopPropagation();
             e.preventDefault();
             this.castSpell(i + 1);
           }, { passive: false });
-          // Touchend mobile: rimuove focus e previene doppio trigger
-          slots[i].addEventListener("touchend", (e) => {
+          slot.addEventListener("touchend", (e) => {
+            console.log("TOUCHEND spell-slot", i + 1, e.type, e, slot);
             e.stopPropagation();
             e.preventDefault();
           }, { passive: false });
-          // Assicura che pointer-events sia attivo
-          (slots[i] as HTMLElement).style.pointerEvents = "auto";
         }
       }
     }, 500);
@@ -337,13 +340,19 @@ export class Game {
       knob.style.left = "32px";
       knob.style.top = "32px";
       knob.style.transition = "left 0.1s, top 0.1s";
+      knob.style.pointerEvents = "auto";
+      knob.style.zIndex = "100002";
       knobArea.appendChild(knob);
+
+      knobArea.style.pointerEvents = "auto";
+      knobArea.style.zIndex = "100001";
 
       let knobActive = false;
       let knobStart = { x: 0, y: 0 };
       let knobDir = { x: 0, y: 0 };
 
       knobArea.addEventListener("touchstart", (e) => {
+        console.log("KNOB-AREA touchstart", e.type, e, knobArea);
         e.stopPropagation();
         e.preventDefault();
         knobActive = true;
@@ -351,6 +360,7 @@ export class Game {
         knobStart = { x: touch.clientX, y: touch.clientY };
       });
       knobArea.addEventListener("touchmove", (e) => {
+        console.log("KNOB-AREA touchmove", e.type, e, knobArea);
         e.stopPropagation();
         e.preventDefault();
         if (!knobActive) return;
@@ -381,6 +391,7 @@ export class Game {
         }
       });
       knobArea.addEventListener("touchend", (e) => {
+        console.log("KNOB-AREA touchend", e.type, e, knobArea);
         e.stopPropagation();
         e.preventDefault();
         knobActive = false;

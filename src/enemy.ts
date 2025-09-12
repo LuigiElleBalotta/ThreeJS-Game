@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { Player } from "./player";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
+import { clone } from "./utils/skeletonutils.js";
 import type { GLTF } from "three/examples/jsm/loaders/GLTFLoader";
 
 export class Enemy {
@@ -21,23 +22,20 @@ export class Enemy {
     this.mesh = new THREE.Group();
     this.mesh.position.set(x, 1, z);
 
-    // Carica SEMPRE una nuova istanza del modello GLTF per ogni Enemy
-    const loader = new GLTFLoader();
-    loader.load(
-      "/characters/zombie/scene.gltf",
-      (gltf: GLTF) => {
-        gltf.scene.traverse((child: THREE.Object3D) => {
-          if ((child as THREE.Mesh).isMesh) {
-            (child as THREE.Mesh).castShadow = true;
-            (child as THREE.Mesh).receiveShadow = true;
-          }
-        });
-        gltf.scene.scale.set(0.01, 0.01, 0.01);
-        gltf.scene.position.y = -1;
-        this.mesh.clear();
-        this.mesh.add(gltf.scene);
-      }
-    );
+    if (prefab) {
+      // Use local clone util for proper skinning/animation support
+      const zombie = clone(prefab.scene);
+      zombie.traverse((child: THREE.Object3D) => {
+        if ((child as THREE.Mesh).isMesh) {
+          (child as THREE.Mesh).castShadow = true;
+          (child as THREE.Mesh).receiveShadow = true;
+        }
+      });
+      zombie.scale.set(0.01, 0.01, 0.01);
+      zombie.position.set(0, -1, 0);
+      this.mesh.clear();
+      this.mesh.add(zombie);
+    }
 
     this.speed = 0.03 + Math.random() * 0.02; // velocità leggermente variabile
   }

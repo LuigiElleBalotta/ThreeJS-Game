@@ -199,13 +199,15 @@ export class Game {
           slots[i].addEventListener("click", (e) => {
             e.stopPropagation();
             this.castSpell(i);
-          });
+          }, { passive: false });
           // Tap mobile: usa pointerdown per compatibilità massima
           slots[i].addEventListener("pointerdown", (e) => {
             e.stopPropagation();
             e.preventDefault();
             this.castSpell(i);
-          });
+          }, { passive: false });
+          // Assicura che pointer-events sia attivo
+          (slots[i] as HTMLElement).style.pointerEvents = "auto";
         }
       }
     }, 500);
@@ -267,15 +269,18 @@ export class Game {
       const controller = document.createElement("div");
       controller.id = "mobile-controller";
       controller.style.position = "fixed";
+      controller.style.left = "2vw";
       controller.style.right = "2vw";
       controller.style.bottom = "10vh";
       controller.style.zIndex = "99999";
       controller.style.display = "flex";
       controller.style.flexDirection = "row";
-      controller.style.alignItems = "flex-end";
-      controller.style.gap = "4vw";
+      controller.style.alignItems = "center";
+      controller.style.justifyContent = "space-between";
+      controller.style.width = "96vw";
+      controller.style.pointerEvents = "none";
 
-      // Jump button a sinistra
+      // Jump button a sinistra del contenitore
       const jumpBtn = document.createElement("button");
       jumpBtn.innerText = "⤒";
       jumpBtn.style.width = "60px";
@@ -290,6 +295,7 @@ export class Game {
       jumpBtn.style.userSelect = "none";
       jumpBtn.style.outline = "none";
       jumpBtn.style.marginBottom = "10px";
+      jumpBtn.style.pointerEvents = "auto";
       jumpBtn.addEventListener("touchstart", e => {
         e.preventDefault();
         this.keys.add(" ");
@@ -297,9 +303,7 @@ export class Game {
       });
       jumpBtn.addEventListener("touchend", () => this.keys.delete(" "));
 
-      controller.appendChild(jumpBtn);
-
-      // Knob analogico (tipo PlayStation) a destra
+      // Knob analogico (tipo PlayStation) a destra del contenitore
       const knobArea = document.createElement("div");
       knobArea.style.position = "relative";
       knobArea.style.width = "120px";
@@ -312,6 +316,10 @@ export class Game {
       knobArea.style.display = "flex";
       knobArea.style.alignItems = "center";
       knobArea.style.justifyContent = "center";
+
+      controller.appendChild(jumpBtn);
+      controller.appendChild(knobArea);
+      document.body.appendChild(controller);
 
       const knob = document.createElement("div");
       knob.style.width = "56px";

@@ -232,7 +232,6 @@ export class Game {
       const amount = e.detail.amount;
       // Combat timer: resetta ogni danno subito
       this.lastCombatTime = performance.now();
-      console.log("lastCombatTime aggiornato: playerDamage", this.lastCombatTime);
       // Se chi ha inflitto il danno è noto e non è già selezionato, selezionalo
       if (e.detail && e.detail.sourceEnemy && (!this.selectedEnemy || this.selectedEnemy !== e.detail.sourceEnemy)) {
         this.selectedEnemy = e.detail.sourceEnemy;
@@ -506,7 +505,6 @@ export class Game {
     this.spellLastCast = now;
     // Combat timer: resetta ogni attacco
     this.lastCombatTime = performance.now();
-    console.log("lastCombatTime aggiornato: castSpell", this.lastCombatTime);
 
     // Calcolo critico: 10% chance
     let isCrit = Math.random() < 0.1;
@@ -750,7 +748,6 @@ export class Game {
   }
 
   animate = () => {
-    console.log("ANIMATE FRAME");
     requestAnimationFrame(this.animate);
 
     const delta = this.clock.getDelta();
@@ -758,7 +755,6 @@ export class Game {
     if(!this.player.isAlive()){
       this.ui.showGameOver(()=>this.reset());
       // DEBUG: player morto, interrompo animate
-      console.log("ANIMATE STOP: player morto, hp:", this.player.hp);
       return;
     }
 
@@ -810,7 +806,6 @@ export class Game {
     // Logga isOutOfCombat ogni 2 secondi
     if (!this.lastLogTime) this.lastLogTime = now;
     if (now - this.lastLogTime > 2000) {
-      console.log("isOutOfCombat", isOutOfCombat);
       this.lastLogTime = now;
     }
 

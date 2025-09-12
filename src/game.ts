@@ -79,7 +79,128 @@ export class Game {
     this.healthBarStatusDiv.style.display = "none";
     document.body.appendChild(this.healthBarStatusDiv);
 
+    // Mobile overlay
+    const isMobile = /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop|Mobile/i.test(navigator.userAgent) || window.innerWidth < 800;
+    if (isMobile) {
+      const mobileOverlay = document.createElement("div");
+      mobileOverlay.id = "mobile-rotate-overlay";
+      mobileOverlay.style.position = "fixed";
+      mobileOverlay.style.top = "0";
+      mobileOverlay.style.left = "0";
+      mobileOverlay.style.width = "100vw";
+      mobileOverlay.style.height = "100vh";
+      mobileOverlay.style.background = "rgba(0,0,0,0.85)";
+      mobileOverlay.style.display = "flex";
+      mobileOverlay.style.alignItems = "center";
+      mobileOverlay.style.justifyContent = "center";
+      mobileOverlay.style.zIndex = "9999999";
+      mobileOverlay.style.color = "#fff";
+      mobileOverlay.style.fontSize = "2.5rem";
+      mobileOverlay.style.fontWeight = "bold";
+      mobileOverlay.innerText = "Rotate your phone to play";
+      document.body.appendChild(mobileOverlay);
+      setTimeout(() => {
+        mobileOverlay.remove();
+      }, 5000);
+    }
+
     this.initWorld();
+
+    // Mobile controller
+    if (isMobile) {
+      const controller = document.createElement("div");
+      controller.id = "mobile-controller";
+      controller.style.position = "fixed";
+      controller.style.right = "2vw";
+      controller.style.bottom = "10vh";
+      controller.style.zIndex = "99999";
+      controller.style.display = "flex";
+      controller.style.flexDirection = "column";
+      controller.style.alignItems = "center";
+      controller.style.gap = "2vw";
+
+      // Joystick (up, left, right, down)
+      const directions = [
+        { key: "w", label: "▲" },
+        { key: "a", label: "◀" },
+        { key: "s", label: "▼" },
+        { key: "d", label: "▶" }
+      ];
+      const joystick = document.createElement("div");
+      joystick.style.display = "grid";
+      joystick.style.gridTemplateColumns = "40px 40px 40px";
+      joystick.style.gridTemplateRows = "40px 40px 40px";
+      joystick.style.gap = "5px";
+      joystick.style.marginBottom = "10px";
+
+      // Empty cells for grid
+      for (let i = 0; i < 9; i++) {
+        const btn = document.createElement("button");
+        btn.style.width = "40px";
+        btn.style.height = "40px";
+        btn.style.fontSize = "1.5rem";
+        btn.style.opacity = "0.8";
+        btn.style.background = "#222";
+        btn.style.color = "#fff";
+        btn.style.border = "2px solid #fff";
+        btn.style.borderRadius = "8px";
+        btn.style.touchAction = "none";
+        btn.style.userSelect = "none";
+        btn.style.outline = "none";
+        btn.style.transition = "background 0.2s";
+        btn.style.margin = "0";
+        btn.style.padding = "0";
+        btn.disabled = true;
+        joystick.appendChild(btn);
+      }
+      // Up
+      joystick.children[1].innerHTML = "▲";
+      joystick.children[1].disabled = false;
+      joystick.children[1].addEventListener("touchstart", () => this.keys.add("w"));
+      joystick.children[1].addEventListener("touchend", () => this.keys.delete("w"));
+      // Left
+      joystick.children[3].innerHTML = "◀";
+      joystick.children[3].disabled = false;
+      joystick.children[3].addEventListener("touchstart", () => this.keys.add("a"));
+      joystick.children[3].addEventListener("touchend", () => this.keys.delete("a"));
+      // Down
+      joystick.children[7].innerHTML = "▼";
+      joystick.children[7].disabled = false;
+      joystick.children[7].addEventListener("touchstart", () => this.keys.add("s"));
+      joystick.children[7].addEventListener("touchend", () => this.keys.delete("s"));
+      // Right
+      joystick.children[5].innerHTML = "▶";
+      joystick.children[5].disabled = false;
+      joystick.children[5].addEventListener("touchstart", () => this.keys.add("d"));
+      joystick.children[5].addEventListener("touchend", () => this.keys.delete("d"));
+
+      controller.appendChild(joystick);
+
+      // Jump button
+      const jumpBtn = document.createElement("button");
+      jumpBtn.innerText = "⤒";
+      jumpBtn.style.width = "60px";
+      jumpBtn.style.height = "60px";
+      jumpBtn.style.fontSize = "2rem";
+      jumpBtn.style.opacity = "0.9";
+      jumpBtn.style.background = "#ff0060";
+      jumpBtn.style.color = "#fff";
+      jumpBtn.style.border = "2px solid #fff";
+      jumpBtn.style.borderRadius = "50%";
+      jumpBtn.style.touchAction = "none";
+      jumpBtn.style.userSelect = "none";
+      jumpBtn.style.outline = "none";
+      jumpBtn.style.marginTop = "10px";
+      jumpBtn.addEventListener("touchstart", () => {
+        this.keys.add(" ");
+        this.player && this.player.jump();
+      });
+      jumpBtn.addEventListener("touchend", () => this.keys.delete(" "));
+
+      controller.appendChild(jumpBtn);
+
+      document.body.appendChild(controller);
+    }
   }
 
   async initWorld() {

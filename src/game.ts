@@ -2,7 +2,6 @@ import * as THREE from "three";
 import { Player } from "./player";
 import { Enemy } from "./enemy";
 import { UI } from "./ui";
-import { HealthBarAbove } from "./healthBarAbove";
 import { ThirdPersonCamera } from "./camera";
 
 export class Game {
@@ -11,7 +10,6 @@ export class Game {
   renderer: THREE.WebGLRenderer;
   player!: Player;
   enemies: Enemy[] = [];
-  hbAbove: HealthBarAbove[] = [];
   keys: Set<string> = new Set();
   ui!: UI;
   clock!: THREE.Clock;
@@ -655,9 +653,6 @@ export class Game {
       const enemy = new Enemy(x, z, zombiePrefab);
       this.enemies.push(enemy);
       this.scene.add(enemy.mesh);
-      const hb = new HealthBarAbove(enemy, this.camera);
-      hb.update();
-      this.hbAbove.push(hb);
       if (i % 10 === 0) await new Promise(r => setTimeout(r, 0));
     }
 
@@ -671,9 +666,6 @@ export class Game {
       }
       if (e.key.toLowerCase() === "v") {
         this.healthBarsVisible = !this.healthBarsVisible;
-        this.hbAbove.forEach(h => {
-          h.domElement.style.display = this.healthBarsVisible ? "block" : "none";
-        });
 
         // Mostra messaggio stato healthbar per 3 secondi
         this.healthBarStatusDiv.textContent = this.healthBarsVisible ? "healthbar attivate" : "healthbar disattivate";
@@ -733,18 +725,15 @@ export class Game {
   reset() {
     this.scene.remove(this.player.mesh);
     this.enemies.forEach(e=>this.scene.remove(e.mesh));
-    this.hbAbove.forEach(h=>h.destroy());
 
     this.player = new Player();
     this.scene.add(this.player.mesh);
 
     this.enemies = [];
-    this.hbAbove = [];
     for(let i=0;i<5;i++){
       const enemy = new Enemy(5*i,5*i);
       this.enemies.push(enemy);
       this.scene.add(enemy.mesh);
-      this.hbAbove.push(new HealthBarAbove(enemy,this.camera));
     }
 
     this.ui.updatePlayerHealth(this.player.hp, this.player.mana ?? 100, this.player.maxHp ?? 100, this.player.maxMana ?? 100);
@@ -986,7 +975,6 @@ export class Game {
     this.player.update(delta);
 
     this.enemies.forEach(e=>e.update(this.player));
-    this.hbAbove.forEach(h=>h.update());
 
     this.ui.updatePlayerHealth(this.player.hp, this.player.mana, this.player.maxHp, this.player.maxMana);
 
@@ -994,8 +982,5 @@ export class Game {
     this.camera.lookAt(this.player.mesh.position);
 
     this.renderer.render(this.scene, this.camera);
-
-    // Aggiorna healthbar DOPO il render per proiezione corretta
-    this.hbAbove.forEach(h=>h.update());
   }
 }

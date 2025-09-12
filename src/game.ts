@@ -104,6 +104,43 @@ export class Game {
       }, 5000);
     }
 
+    // Responsive resize (canvas e camera)
+    const resizeCanvas = () => {
+      this.camera.aspect = window.innerWidth / window.innerHeight;
+      this.camera.updateProjectionMatrix();
+      this.renderer.setSize(window.innerWidth, window.innerHeight);
+    };
+    window.addEventListener("resize", resizeCanvas);
+    window.addEventListener("orientationchange", resizeCanvas);
+
+    // Fullscreen button (mobile)
+    if (isMobile) {
+      const fsBtn = document.createElement("button");
+      fsBtn.innerText = "⛶";
+      fsBtn.style.position = "fixed";
+      fsBtn.style.bottom = "2vh";
+      fsBtn.style.right = "2vw";
+      fsBtn.style.width = "56px";
+      fsBtn.style.height = "56px";
+      fsBtn.style.fontSize = "2.2rem";
+      fsBtn.style.background = "#222";
+      fsBtn.style.color = "#fff";
+      fsBtn.style.border = "2px solid #fff";
+      fsBtn.style.borderRadius = "50%";
+      fsBtn.style.opacity = "0.85";
+      fsBtn.style.zIndex = "999999";
+      fsBtn.style.userSelect = "none";
+      fsBtn.style.touchAction = "none";
+      fsBtn.addEventListener("touchstart", e => {
+        e.preventDefault();
+        const el = document.documentElement;
+        if (el.requestFullscreen) el.requestFullscreen();
+        else if ((el as any).webkitRequestFullscreen) (el as any).webkitRequestFullscreen();
+        else if ((el as any).msRequestFullscreen) (el as any).msRequestFullscreen();
+      });
+      document.body.appendChild(fsBtn);
+    }
+
     this.initWorld();
 
     // Mobile controller
@@ -146,11 +183,13 @@ export class Game {
         btn.style.borderRadius = "8px";
         btn.style.touchAction = "none";
         btn.style.userSelect = "none";
+        btn.style.webkitUserSelect = "none";
         btn.style.outline = "none";
         btn.style.transition = "background 0.2s";
         btn.style.margin = "0";
         btn.style.padding = "0";
         btn.disabled = true;
+        btn.addEventListener("touchstart", e => e.preventDefault());
         joystick.appendChild(btn);
       }
       // Up
@@ -191,7 +230,8 @@ export class Game {
       jumpBtn.style.userSelect = "none";
       jumpBtn.style.outline = "none";
       jumpBtn.style.marginTop = "10px";
-      jumpBtn.addEventListener("touchstart", () => {
+      jumpBtn.addEventListener("touchstart", e => {
+        e.preventDefault();
         this.keys.add(" ");
         this.player && this.player.jump();
       });
@@ -200,6 +240,29 @@ export class Game {
       controller.appendChild(jumpBtn);
 
       document.body.appendChild(controller);
+
+      // Camera swipe (mobile)
+      let lastTouchX: number | null = null;
+      let isSwiping = false;
+      const swipeArea = this.renderer.domElement;
+      swipeArea.addEventListener("touchstart", (e) => {
+        if (e.touches.length === 1) {
+          lastTouchX = e.touches[0].clientX;
+          isSwiping = true;
+        }
+      });
+      swipeArea.addEventListener("touchmove", (e) => {
+        if (isSwiping && e.touches.length === 1 && lastTouchX !== null) {
+          const dx = e.touches[0].clientX - lastTouchX;
+          lastTouchX = e.touches[0].clientX;
+          // Sensibilità swipe (più basso = più sensibile)
+          this.cameraControl.rotation.y -= dx * 0.008;
+        }
+      });
+      swipeArea.addEventListener("touchend", () => {
+        isSwiping = false;
+        lastTouchX = null;
+      });
     }
   }
 

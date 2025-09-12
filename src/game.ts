@@ -667,6 +667,13 @@ export class Game {
       if (e.key.toLowerCase() === "v") {
         this.healthBarsVisible = !this.healthBarsVisible;
 
+        // Mostra/nasconde le nuove healthbar dei nemici
+        this.enemies.forEach(enemy => {
+          if (enemy.healthBarDiv) {
+            enemy.healthBarDiv.style.display = this.healthBarsVisible && enemy.isAlive() ? "block" : "none";
+          }
+        });
+
         // Mostra messaggio stato healthbar per 3 secondi
         this.healthBarStatusDiv.textContent = this.healthBarsVisible ? "healthbar attivate" : "healthbar disattivate";
         this.healthBarStatusDiv.style.display = "block";
@@ -974,9 +981,20 @@ export class Game {
     }
     this.player.update(delta);
 
-    this.enemies.forEach(e=>e.update(this.player));
+    this.enemies.forEach(e=>{
+      e.update(this.player, this.camera);
+      // Nasconde la healthbar se disattivata
+      if (e.healthBarDiv) {
+        e.healthBarDiv.style.display = this.healthBarsVisible && e.isAlive() ? "block" : "none";
+      }
+    });
 
     this.ui.updatePlayerHealth(this.player.hp, this.player.mana, this.player.maxHp, this.player.maxMana);
+
+    // Rimuovi le healthbar degli enemy morti
+    this.enemies.forEach(e => {
+      if (!e.isAlive()) e.destroyHealthBar();
+    });
 
     this.cameraControl.update();
     this.camera.lookAt(this.player.mesh.position);

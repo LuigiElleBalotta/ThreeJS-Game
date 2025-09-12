@@ -18,9 +18,35 @@ export class Enemy {
   mixer?: THREE.AnimationMixer;
   actions: { [name: string]: THREE.AnimationAction } = {};
 
+  // --- Health bar 2D DOM
+  healthBarDiv: HTMLDivElement;
+  healthBarInner: HTMLDivElement;
+  headOffset: THREE.Vector3 | null = null;
+
   constructor(x: number, z: number, prefab?: any) {
     this.mesh = new THREE.Group();
     this.mesh.position.set(x, 1, z);
+
+    // Health bar DOM
+    this.healthBarDiv = document.createElement("div");
+    this.healthBarDiv.style.position = "fixed";
+    this.healthBarDiv.style.width = "64px";
+    this.healthBarDiv.style.height = "10px";
+    this.healthBarDiv.style.background = "#333";
+    this.healthBarDiv.style.border = "1px solid #fff";
+    this.healthBarDiv.style.borderRadius = "6px";
+    this.healthBarDiv.style.overflow = "hidden";
+    this.healthBarDiv.style.pointerEvents = "none";
+    this.healthBarDiv.style.zIndex = "10000";
+    this.healthBarDiv.style.display = "block";
+    this.healthBarInner = document.createElement("div");
+    this.healthBarInner.style.height = "100%";
+    this.healthBarInner.style.background = "#ff0060";
+    this.healthBarInner.style.transition = "width 0.2s";
+    this.healthBarInner.style.borderRadius = "6px";
+    this.healthBarInner.style.width = "100%";
+    this.healthBarDiv.appendChild(this.healthBarInner);
+    document.body.appendChild(this.healthBarDiv);
 
     if (prefab) {
       // Use local clone util for proper skinning/animation support
@@ -36,6 +62,32 @@ export class Enemy {
       this.mesh.clear();
       this.mesh.add(zombie);
     }
+
+    // Calcola la posizione della testa solo una volta
+    setTimeout(() => {
+      let headWorldPos = new THREE.Vector3();
+      let maxY = -Infinity;
+      this.mesh.traverse((obj: any) => {
+        if (obj.isMesh) {
+          obj.updateWorldMatrix(true, false);
+          const geometry = obj.geometry;
+          if (geometry && geometry.attributes && geometry.attributes.position) {
+            const pos = geometry.attributes.position;
+            for (let i = 0; i < pos.count; i++) {
+              let v = new THREE.Vector3().fromBufferAttribute(pos, i);
+              obj.localToWorld(v);
+              if (v.y > maxY) {
+                maxY = v.y;
+                headWorldPos.copy(v);
+              }
+            }
+          }
+        }
+      });
+      // Offset verticale sopra la testa
+      headWorldPos.y += 0.5;
+      this.headOffset = headWorldPos.clone().sub(this.mesh.position);
+    }, 0);
 
     this.speed = 0.03 + Math.random() * 0.02; // velocità leggermente variabile
   }
@@ -61,7 +113,34 @@ export class Enemy {
     return box;
   }
 
-  update(player: Player) {
+  updateHealthBar(camera: THREE.Camera) {
+    if (!this.alive) {
+      this.healthBarDiv.style.display = "none";
+      return;
+    }
+    // Usa la posizione della testa calcolata una volta sola
+    if (this.headOffset) {
+      const headWorldPos = this.mesh.position.clone().add(this.headOffset);
+      const vector = headWorldPos.project(camera);
+      const x = (vector.x * 0.5 + 0.5) * window.innerWidth - 32;
+      const y = (-vector.y * 0.5 + 0.5) * window.innerHeight - 32;
+      this.healthBarDiv.style.left = `${x}px`;
+      this.healthBarDiv.style.top = `${y}px`;
+      this.healthBarDiv.style.display = "block";
+    }
+
+    // Aggiorna la barra in base agli hp
+    const hp = Math.max(0, this.hp);
+    const maxHp = this.maxHp || 50;
+    const percent = (hp / maxHp) * 100;
+    this.healthBarInner.style.width = `${percent}%`;
+  }
+
+  destroyHealthBar() {
+    this.healthBarDiv.remove();
+  }
+
+  update(player: Player, camera?: THREE.Camera) {
     if (this.mixer) {
       this.mixer.update(1 / 60);
     }
@@ -69,8 +148,11 @@ export class Enemy {
     if (!this.alive) {
       // caduta mesh
       this.mesh.position.y -= 0.02;
+      this.healthBarDiv.style.display = "none";
       return;
     }
+
+    if (camera) this.updateHealthBar(camera);
 
     const dir = new THREE.Vector3().subVectors(player.mesh.position, this.mesh.position);
     const distance = dir.length();

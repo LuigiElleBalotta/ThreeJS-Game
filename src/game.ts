@@ -1,0 +1,377 @@
+import * as THREE from "three";
+import { Player } from "./player";
+import { Enemy } from "./enemy";
+import { UI } from "./ui";
+import { HealthBarAbove } from "./healthBarAbove";
+import { ThirdPersonCamera } from "./camera";
+
+export class Game {
+  scene: THREE.Scene;
+  camera: THREE.PerspectiveCamera;
+  renderer: THREE.WebGLRenderer;
+  player!: Player;
+  enemies: Enemy[] = [];
+  hbAbove: HealthBarAbove[] = [];
+  keys: Set<string> = new Set();
+  ui!: UI;
+  clock!: THREE.Clock;
+
+  cameraControl!: ThirdPersonCamera;
+  rightMouseDown: boolean = false;
+  healthBarsVisible: boolean = true;
+  healthBarStatusDiv!: HTMLDivElement;
+  sceneObstacles: THREE.Mesh[] = [];
+
+  loaderDiv!: HTMLDivElement;
+  fpsDiv!: HTMLDivElement;
+  lastFpsUpdate: number = 0;
+  frames: number = 0;
+  fps: number = 0;
+
+  constructor() {
+    this.scene = new THREE.Scene();
+    this.scene.background = new THREE.Color(0x87ceeb);
+
+    this.camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+    this.renderer = new THREE.WebGLRenderer({antialias:true});
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(this.renderer.domElement);
+
+    // FPS overlay
+    this.fpsDiv = document.createElement("div");
+    this.fpsDiv.style.position = "fixed";
+    this.fpsDiv.style.bottom = "10px";
+    this.fpsDiv.style.right = "20px";
+    this.fpsDiv.style.background = "rgba(0,0,0,0.7)";
+    this.fpsDiv.style.color = "#0f0";
+    this.fpsDiv.style.fontFamily = "monospace";
+    this.fpsDiv.style.fontSize = "1.2rem";
+    this.fpsDiv.style.padding = "6px 16px";
+    this.fpsDiv.style.borderRadius = "8px";
+    this.fpsDiv.style.zIndex = "99999";
+    this.fpsDiv.innerText = "FPS: ...";
+    document.body.appendChild(this.fpsDiv);
+    this.fpsDiv.style.display = "block";
+
+    // Loader overlay
+    this.loaderDiv = document.createElement("div");
+    this.loaderDiv.style.position = "fixed";
+    this.loaderDiv.style.top = "0";
+    this.loaderDiv.style.left = "0";
+    this.loaderDiv.style.width = "100vw";
+    this.loaderDiv.style.height = "100vh";
+    this.loaderDiv.style.background = "#222";
+    this.loaderDiv.style.color = "#fff";
+    this.loaderDiv.style.fontSize = "3rem";
+    this.loaderDiv.style.display = "flex";
+    this.loaderDiv.style.alignItems = "center";
+    this.loaderDiv.style.justifyContent = "center";
+    this.loaderDiv.style.zIndex = "999999";
+    this.loaderDiv.innerText = "Caricamento...";
+    document.body.appendChild(this.loaderDiv);
+
+    // Crea e aggiungi il div per il messaggio stato healthbar
+    this.healthBarStatusDiv = document.createElement("div");
+    this.healthBarStatusDiv.style.position = "fixed";
+    this.healthBarStatusDiv.style.top = "40px";
+    this.healthBarStatusDiv.style.left = "50%";
+    this.healthBarStatusDiv.style.transform = "translateX(-50%)";
+    this.healthBarStatusDiv.style.display = "none";
+    document.body.appendChild(this.healthBarStatusDiv);
+
+    this.initWorld();
+  }
+
+  async initWorld() {
+    // Luce
+    const light = new THREE.DirectionalLight(0xffffff, 1);
+    light.position.set(10,10,10);
+    this.scene.add(light);
+
+    // Terreno con texture prato
+    const textureLoader = new THREE.TextureLoader();
+    const grassTexture = textureLoader.load("https://threejs.org/examples/textures/terrain/grasslight-big.jpg");
+    grassTexture.wrapS = grassTexture.wrapT = THREE.RepeatWrapping;
+    grassTexture.repeat.set(160, 160);
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(1000, 1000),
+      new THREE.MeshStandardMaterial({ map: grassTexture })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    this.scene.add(ground);
+
+    // Alberi semplici (più numerosi)
+    for (let i = 0; i < 200; i++) {
+      const trunk = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.3, 0.5, 3),
+        new THREE.MeshStandardMaterial({ color: 0x8b5a2b })
+      );
+      trunk.position.set(
+        Math.random() * 980 - 490,
+        1.5,
+        Math.random() * 980 - 490
+      );
+      this.scene.add(trunk);
+      this.sceneObstacles.push(trunk);
+
+      const leaves = new THREE.Mesh(
+        new THREE.SphereGeometry(1.2, 12, 12),
+        new THREE.MeshStandardMaterial({ color: 0x228b22 })
+      );
+      leaves.position.set(trunk.position.x, trunk.position.y + 2, trunk.position.z);
+      this.scene.add(leaves);
+      if (i % 20 === 0) await new Promise(r => setTimeout(r, 0));
+    }
+
+    // Rocce semplici (più numerose)
+    for (let i = 0; i < 120; i++) {
+      const rock = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(1, 0),
+        new THREE.MeshStandardMaterial({ color: 0x888888 })
+      );
+      rock.position.set(
+        Math.random() * 980 - 490,
+        1,
+        Math.random() * 980 - 490
+      );
+      rock.scale.setScalar(0.6 + Math.random() * 1.2);
+      this.scene.add(rock);
+      this.sceneObstacles.push(rock);
+      if (i % 20 === 0) await new Promise(r => setTimeout(r, 0));
+    }
+
+    // Posiziona il player lontano dal nemico e rivolto verso di lui
+    this.player = new Player();
+    this.player.mesh.position.set(5, 1, -15); // x=5, y=1, z=-15
+
+    // Calcola direzione verso il nemico (5, 1, 5)
+    const toEnemy = new THREE.Vector3(5, 1, 5).sub(this.player.mesh.position);
+    const angle = Math.atan2(toEnemy.x, toEnemy.z);
+    this.player.mesh.rotation.y = angle;
+
+    this.cameraControl = new ThirdPersonCamera(this.camera, this.player);
+    this.scene.add(this.player.mesh);
+
+    // Carica prefab zombie
+    // Usa GLTFLoader importato
+    const { GLTFLoader } = await import("three/examples/jsm/loaders/GLTFLoader");
+    const gltfLoader = new GLTFLoader();
+    const zombiePrefab = await new Promise<any>((resolve) => {
+      gltfLoader.load(
+        "/characters/zombie/scene.gltf",
+        (gltf) => {
+          // DEBUG: log struttura prefab
+          // @ts-ignore
+          window.zombiePrefabDebug = gltf;
+          // gltf.scene.scale.set(0.01, 0.01, 0.01); // Spostato nella classe Enemy per evitare zombie gigante
+          gltf.scene.position.y = -1;
+          resolve(gltf);
+        }
+      );
+    });
+
+    // Spawna molti nemici sparsi per la mappa usando il prefab
+    for (let i = 0; i < 60; i++) {
+      const x = Math.random() * 980 - 490;
+      const z = Math.random() * 980 - 490;
+      const enemy = new Enemy(x, z, zombiePrefab);
+      this.enemies.push(enemy);
+      this.scene.add(enemy.mesh);
+      const hb = new HealthBarAbove(enemy, this.camera);
+      hb.update();
+      this.hbAbove.push(hb);
+      if (i % 10 === 0) await new Promise(r => setTimeout(r, 0));
+    }
+
+    this.ui = new UI();
+    this.clock = new THREE.Clock();
+
+    window.addEventListener("keydown", (e)=>{
+      this.keys.add(e.key.toLowerCase());
+      if (e.key === " ") {
+        this.player.jump();
+      }
+      if (e.key.toLowerCase() === "v") {
+        this.healthBarsVisible = !this.healthBarsVisible;
+        this.hbAbove.forEach(h => {
+          h.domElement.style.display = this.healthBarsVisible ? "block" : "none";
+        });
+
+        // Mostra messaggio stato healthbar per 3 secondi
+        this.healthBarStatusDiv.textContent = this.healthBarsVisible ? "healthbar attivate" : "healthbar disattivate";
+        this.healthBarStatusDiv.style.display = "block";
+        this.healthBarStatusDiv.style.background = "#ff0060";
+        this.healthBarStatusDiv.style.color = "#fff";
+        this.healthBarStatusDiv.style.fontWeight = "bold";
+        this.healthBarStatusDiv.style.fontSize = "2rem";
+        this.healthBarStatusDiv.style.border = "4px solid #fff";
+        this.healthBarStatusDiv.style.boxShadow = "0 0 24px #000";
+        this.healthBarStatusDiv.style.zIndex = "99999";
+        setTimeout(() => {
+          this.healthBarStatusDiv.style.display = "none";
+        }, 3000);
+      }
+    });
+    window.addEventListener("keyup", (e)=>this.keys.delete(e.key.toLowerCase()));
+
+    window.addEventListener("mousedown", (e) => {
+      if (e.button === 2) this.rightMouseDown = true;
+    });
+    window.addEventListener("mouseup", (e) => {
+      if (e.button === 2) this.rightMouseDown = false;
+    });
+
+    window.addEventListener("playerAttack", ()=>this.handleAttack());
+
+    // Disabilita context menu browser su tasto destro
+    window.addEventListener("contextmenu", e => e.preventDefault());
+
+    this.loaderDiv.style.display = "none";
+    this.animate();
+  }
+
+  handleAttack() {
+    const ray = this.player.getAttackRay();
+    const enemyMeshes = this.enemies.filter(e=>e.isAlive()).map(e=>e.mesh);
+    const intersects = ray.intersectObjects(enemyMeshes);
+    if(intersects.length>0){
+      const hitEnemy = this.enemies.find(e=>e.mesh===intersects[0].object);
+      if(hitEnemy) hitEnemy.takeDamage(this.player.attackDamage);
+    }
+  }
+
+  reset() {
+    this.scene.remove(this.player.mesh);
+    this.enemies.forEach(e=>this.scene.remove(e.mesh));
+    this.hbAbove.forEach(h=>h.destroy());
+
+    this.player = new Player();
+    this.scene.add(this.player.mesh);
+
+    this.enemies = [];
+    this.hbAbove = [];
+    for(let i=0;i<5;i++){
+      const enemy = new Enemy(5*i,5*i);
+      this.enemies.push(enemy);
+      this.scene.add(enemy.mesh);
+      this.hbAbove.push(new HealthBarAbove(enemy,this.camera));
+    }
+
+    this.ui.updatePlayerHealth(this.player.hp);
+  }
+
+  animate = () => {
+    requestAnimationFrame(this.animate);
+
+    const delta = this.clock.getDelta();
+
+    if(!this.player.isAlive()){
+      this.ui.showGameOver(()=>this.reset());
+      return;
+    }
+
+    // FPS
+    if (this.fpsDiv) {
+      this.frames++;
+      const now = performance.now();
+      if (now - this.lastFpsUpdate > 500) {
+        this.fps = Math.round((this.frames * 1000) / (now - this.lastFpsUpdate));
+        this.fpsDiv.innerText = `FPS: ${this.fps}`;
+        this.lastFpsUpdate = now;
+        this.frames = 0;
+      }
+    }
+
+    // Movimento WoW: w/s avanti/indietro, a/d ruotano la camera
+    let cameraDir = new THREE.Vector3();
+    this.camera.getWorldDirection(cameraDir);
+    cameraDir.y = 0;
+    cameraDir.normalize();
+
+    // Ruota la camera con A/D
+    const rotateSpeed = 0.03;
+    if (this.keys.has("a")) {
+      this.cameraControl.rotation.y += rotateSpeed;
+    }
+    if (this.keys.has("d")) {
+      this.cameraControl.rotation.y -= rotateSpeed;
+    }
+
+    // Movimento avanti/indietro
+    // Collisione player con ostacoli
+    const tryMovePlayer = (dir: THREE.Vector3) => {
+      const nextPos = this.player.mesh.position.clone().add(dir);
+
+      // Limiti terreno
+      if (
+        nextPos.x < -499.5 || nextPos.x > 499.5 ||
+        nextPos.z < -499.5 || nextPos.z > 499.5
+      ) {
+        return;
+      }
+
+      // Bounding box player reale
+      const playerBox = this.player.getBoundingBox(nextPos);
+
+      // Collisione con ostacoli
+      let collision = false;
+      for (const obs of this.sceneObstacles) {
+        const obsBox = new THREE.Box3().setFromObject(obs);
+        if (playerBox.intersectsBox(obsBox)) {
+          collision = true;
+          break;
+        }
+      }
+      if (!collision) {
+        this.player.mesh.position.copy(nextPos);
+      }
+    };
+
+    // Movimento diagonale (w+q, w+e, s+q, s+e)
+    let moveDir = new THREE.Vector3();
+    let moving = false;
+
+    if (this.keys.has("w")) {
+      moveDir.add(cameraDir);
+      moving = true;
+    }
+    if (this.keys.has("s")) {
+      moveDir.add(cameraDir.clone().negate());
+      moving = true;
+    }
+    // Calcola vettore laterale rispetto alla camera (sinistra)
+    const leftDir = new THREE.Vector3(cameraDir.z, 0, -cameraDir.x).normalize();
+    if (this.keys.has("q")) {
+      moveDir.add(leftDir);
+      moving = true;
+    }
+    if (this.keys.has("e")) {
+      moveDir.add(leftDir.clone().negate());
+      moving = true;
+    }
+
+    if (moving && moveDir.lengthSq() > 0) {
+      moveDir.normalize().multiplyScalar(this.player.speed);
+      tryMovePlayer(moveDir);
+      // Ruota il player verso la direzione di movimento
+      this.player.mesh.rotation.y = Math.atan2(moveDir.x, moveDir.z);
+    } else {
+      this.player.move(this.keys);
+    }
+    this.player.update(delta);
+
+    this.enemies.forEach(e=>e.update(this.player));
+    this.hbAbove.forEach(h=>h.update());
+
+    this.ui.updatePlayerHealth(this.player.hp);
+
+    this.cameraControl.update();
+    this.camera.lookAt(this.player.mesh.position);
+
+    this.renderer.render(this.scene, this.camera);
+
+    // Aggiorna healthbar DOPO il render per proiezione corretta
+    this.hbAbove.forEach(h=>h.update());
+  }
+}

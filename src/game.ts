@@ -31,6 +31,8 @@ export class Game {
   audio: HTMLAudioElement;
   audioStarted: boolean = false;
   mousePos = { x: 0, y: 0 };
+  selectedEnemy: Enemy | null = null;
+  selectionCircle: THREE.Mesh | null = null;
 
   constructor() {
     this.scene = new THREE.Scene();
@@ -163,6 +165,23 @@ export class Game {
     window.addEventListener("touchstart", startAudio, { once: true });
 
     this.initWorld();
+
+    // Selezione nemico con click
+    window.addEventListener("mousedown", (event) => {
+      if (event.button !== 0) return; // solo click sinistro
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(this.mousePos, this.camera);
+      let found: Enemy | null = null;
+      for (const enemy of this.enemies) {
+        if (!enemy.isAlive()) continue;
+        const intersects = raycaster.intersectObject(enemy.mesh, true);
+        if (intersects.length > 0) {
+          found = enemy;
+          break;
+        }
+      }
+      this.selectedEnemy = found;
+    });
 
     // Mobile controller
     if (isMobile) {
@@ -504,19 +523,51 @@ export class Game {
       const raycaster = new THREE.Raycaster();
       raycaster.setFromCamera(this.mousePos, this.camera);
 
-      let found = false;
+      let foundEnemy: Enemy | null = null;
       for (const enemy of this.enemies) {
         if (!enemy.isAlive()) continue;
         const intersects = raycaster.intersectObject(enemy.mesh, true);
         if (intersects.length > 0) {
-          found = true;
+          foundEnemy = enemy;
           break;
         }
       }
-      if (found) {
+      if (foundEnemy) {
         document.body.style.cursor = "url('/cursors/Pointer_sword_on_32x32.cur'), auto";
       } else {
         document.body.style.cursor = "url('/cursors/Pointer_gauntlet_on_32x32.cur'), auto";
+      }
+
+      // Cerchio di selezione
+      if (this.selectedEnemy && this.selectedEnemy.isAlive()) {
+        if (!this.selectionCircle) {
+          const geometry = new THREE.RingGeometry(1.5, 2, 48);
+          const material = new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0.5, side: THREE.DoubleSide });
+          this.selectionCircle = new THREE.Mesh(geometry, material);
+          this.selectionCircle.rotation.x = -Math.PI / 2;
+          this.selectionCircle.renderOrder = 999;
+          this.selectionCircle.material.depthTest = false;
+          this.scene.add(this.selectionCircle);
+        }
+        // Aggiorna posizione sotto il nemico selezionato
+        // Calcola bounding box reale su tutti i discendenti mesh
+        const box = new THREE.Box3().setFromObject(this.selectedEnemy.mesh, true);
+        const center = new THREE.Vector3();
+        box.getCenter(center);
+        this.selectionCircle.position.set(
+          center.x,
+          box.min.y + 0.01,
+          center.z
+        );
+        this.selectionCircle.rotation.set(-Math.PI / 2, 0, 0);
+        this.selectionCircle.visible = true;
+        // Debug: colore/materiale ben visibile
+        if (this.selectionCircle.material instanceof THREE.MeshBasicMaterial) {
+          this.selectionCircle.material.color.set(0xff0000);
+          this.selectionCircle.material.opacity = 0.5;
+        }
+      } else if (this.selectionCircle) {
+        this.selectionCircle.visible = false;
       }
     }
 

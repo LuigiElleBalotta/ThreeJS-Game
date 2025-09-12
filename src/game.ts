@@ -195,11 +195,33 @@ export class Game {
       if (spellbar) {
         spellbar.style.pointerEvents = "auto";
         spellbar.style.zIndex = "100001";
+        spellbar.style.position = "fixed";
+        spellbar.style.left = "50%";
+        spellbar.style.bottom = "0";
+        spellbar.style.transform = "translateX(-50%)";
+        spellbar.style.width = "auto";
+        spellbar.style.display = "flex";
+        spellbar.style.flexDirection = "row";
+        spellbar.style.justifyContent = "center";
+        spellbar.style.alignItems = "center";
+        spellbar.style.background = "rgba(0,0,0,0.2)";
+        spellbar.style.gap = "8px";
+        spellbar.style.padding = "8px 0";
+        spellbar.style.touchAction = "auto";
         const slots = spellbar.getElementsByClassName("spell-slot");
         for (let i = 0; i < slots.length; i++) {
           const slot = slots[i] as HTMLElement;
           slot.style.pointerEvents = "auto";
           slot.style.zIndex = "100002";
+          slot.style.touchAction = "auto";
+          slot.style.background = "#222";
+          slot.style.border = "2px solid #fff";
+          slot.style.borderRadius = "10px";
+          slot.style.width = "56px";
+          slot.style.height = "56px";
+          slot.style.display = "flex";
+          slot.style.alignItems = "center";
+          slot.style.justifyContent = "center";
           slot.addEventListener("click", (e) => {
             console.log("CLICK spell-slot", i + 1, e.type, e, slot);
             e.stopPropagation();

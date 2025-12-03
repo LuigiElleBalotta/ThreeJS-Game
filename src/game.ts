@@ -390,9 +390,14 @@ export class Game {
     window.addEventListener("inventoryMove", (e: any) => {
       const { itemId, from, to, toSlot } = e.detail || {};
       if (!itemId) return;
+      const item = getItemById(itemId);
+      let removedFromBag = false;
       if (from === "bag") {
         const idx = this.inventory.indexOf(itemId);
-        if (idx >= 0) this.inventory.splice(idx, 1);
+        if (idx >= 0) {
+          this.inventory.splice(idx, 1);
+          removedFromBag = true;
+        }
       } else if (from === "equip") {
         Object.keys(this.currentCharacter.equipment || {}).forEach(slot => {
           if (this.currentCharacter.equipment[slot] === itemId) this.currentCharacter.equipment[slot] = null;
@@ -402,11 +407,18 @@ export class Game {
         this.inventory.push(itemId);
       } else if (to === "equip") {
         if (toSlot) this.currentCharacter.equipment[toSlot] = itemId;
+      } else if (to === "use") {
+        if (item?.use) {
+          item.use({ player: this.player, game: this });
+        } else if (removedFromBag) {
+          // non-usable; restore to bag
+          this.inventory.push(itemId);
+        }
       } else if (to === "void") {
         // drop/delete
-      } else if (to === "use") {
-        const item = getItemById(itemId);
-        if (item?.use) item.use({ player: this.player, game: this });
+      } else {
+        // fallback: restore if removed but not placed
+        if (removedFromBag) this.inventory.push(itemId);
       }
       this.ui.populateBags(this.inventory.map((id: string)=>getItemById(id)), this.gold);
       this.ui.populateEquipment(this.currentCharacter?.equipment || {});
@@ -1060,7 +1072,7 @@ export class Game {
     ground.receiveShadow = true;
     this.scene.add(ground);
 
-    // Alberi semplici (più numerosi)
+    // Alberi semplici (leggermente ridotti per FPS)
     for (let i = 0; i < 140; i++) {
       const trunk = new THREE.Mesh(
         new THREE.CylinderGeometry(0.3, 0.5, 3),
@@ -1083,7 +1095,7 @@ export class Game {
       if (i % 20 === 0) await new Promise(r => setTimeout(r, 0));
     }
 
-    // Rocce semplici (più numerose)
+    // Rocce semplici (ridotte per FPS)
     for (let i = 0; i < 80; i++) {
       const rock = new THREE.Mesh(
         new THREE.IcosahedronGeometry(1, 0),
@@ -1098,6 +1110,26 @@ export class Game {
       this.scene.add(rock);
       this.sceneObstacles.push(rock);
       if (i % 20 === 0) await new Promise(r => setTimeout(r, 0));
+    }
+
+    // Inserisci qualche asset infernale come decorazione
+    try {
+      const { GLTFLoader } = await import("three/examples/jsm/loaders/GLTFLoader");
+      const decoLoader = new GLTFLoader();
+      decoLoader.load("/inferno_world_free/Separate_assets_glb/TowerBig_001.glb", (gltf) => {
+        gltf.scene.scale.set(0.5, 0.5, 0.5);
+        gltf.scene.position.set(120, 0, 80);
+        gltf.scene.traverse((obj: any) => {
+          if (obj.isMesh) {
+            obj.castShadow = true;
+            obj.receiveShadow = true;
+          }
+        });
+        this.scene.add(gltf.scene);
+        this.sceneObstacles.push(gltf.scene as any);
+      });
+    } catch (err) {
+      console.warn("Inferno deco load failed", err);
     }
 
     // Posiziona il player lontano dal nemico e rivolto verso di lui

@@ -48,10 +48,11 @@ export class Player {
     this.mesh = new THREE.Group();
     this.mesh.position.set(0, 1, 0);
 
-    // Carica modello guard_knight
+    // Carica modello per classe
     const loader = new GLTFLoader();
+    const modelPath = this.classId === "mage" ? "/characters/lizard_mage_animated/scene.gltf" : "/characters/guard_knight/scene.gltf";
     loader.load(
-      "/characters/guard_knight/scene.gltf",
+      modelPath,
       (gltf: GLTF) => {
         gltf.scene.traverse((child: THREE.Object3D) => {
           if ((child as THREE.Mesh).isMesh) {
@@ -59,9 +60,12 @@ export class Player {
             (child as THREE.Mesh).receiveShadow = true;
           }
         });
-        gltf.scene.rotation.y = Math.PI;
+        // Orient models: guard faces backward by default, lizard faces forward
+        gltf.scene.rotation.y = this.classId === "mage" ? 0 : Math.PI;
         this.mesh.clear();
-        gltf.scene.scale.set(0.01, 0.01, 0.01);
+        // Mage model is small: enlarge further
+        const scale = this.classId === "mage" ? 0.06 : 0.01;
+        gltf.scene.scale.set(scale, scale, scale);
         gltf.scene.position.y = -1;
         this.mesh.add(gltf.scene);
         this.mesh.scale.set(1, 1, 1);
@@ -73,11 +77,12 @@ export class Player {
           for (const clip of gltf.animations) {
             this.actions[clip.name] = this.mixer.clipAction(clip);
           }
-          // Avvia la prima animazione trovata (idle)
-          const firstAnim = Object.values(this.actions)[0];
-          if (firstAnim) {
-            firstAnim.play();
-            this.activeAction = firstAnim;
+          // Gioca l'idle se presente, preferendo "Static Pose"
+          const idleAnim = Object.entries(this.actions).find(([name]) => name.toLowerCase().includes("static pose") || name.toLowerCase().includes("idle"));
+          const chosen = idleAnim ? idleAnim[1] : Object.values(this.actions)[0];
+          if (chosen) {
+            chosen.play();
+            this.activeAction = chosen;
           }
         }
       }

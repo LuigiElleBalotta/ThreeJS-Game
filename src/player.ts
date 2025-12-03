@@ -3,12 +3,18 @@ import { Enemy } from "./enemy";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 import type { GLTF } from "three/examples/jsm/loaders/GLTFLoader";
 import { AnimationMixer, AnimationAction } from "three";
+import { getClassById } from "./classes";
 
 export class Player {
   maxHp: number = 100;
   hp: number = this.maxHp;
   maxMana: number = 100;
   mana: number = this.maxMana;
+  classId: string = "warrior";
+  level: number = 1;
+  xp: number = 0;
+  xpToNext: number = 100;
+  knownSpells: string[] = ["heroic_strike"];
   mesh: THREE.Mesh;
   speed: number = 0.1;
 
@@ -28,7 +34,17 @@ export class Player {
   actions: { [name: string]: AnimationAction } = {};
   activeAction?: AnimationAction;
 
-  constructor() {
+  constructor(classId: string = "warrior") {
+    this.classId = classId;
+    const classData = getClassById(classId);
+    if (classData) {
+      this.maxHp = classData.baseStats.hp;
+      this.hp = this.maxHp;
+      this.maxMana = classData.baseStats.mana;
+      this.mana = this.maxMana;
+      this.attackDamage = classData.baseStats.attackDamage;
+      this.knownSpells = [...classData.starterSpells];
+    }
     this.mesh = new THREE.Group();
     this.mesh.position.set(0, 1, 0);
 
@@ -164,6 +180,21 @@ export class Player {
     if (this.isOnGround) {
       this.velocityY = 0.32;
       this.isOnGround = false;
+    }
+  }
+
+  gainXp(amount: number) {
+    this.xp += amount;
+    while (this.xp >= this.xpToNext) {
+      this.xp -= this.xpToNext;
+      this.level += 1;
+      this.maxHp += 20;
+      this.maxMana += 15;
+      this.attackDamage += 2;
+      this.hp = this.maxHp;
+      this.mana = this.maxMana;
+      this.xpToNext = Math.round(this.xpToNext * 1.25);
+      window.dispatchEvent(new CustomEvent("playerLevelUp", { detail: { level: this.level } }));
     }
   }
 }

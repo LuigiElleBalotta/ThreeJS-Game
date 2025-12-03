@@ -1,8 +1,12 @@
 import * as THREE from "three";
 import { Player } from "./player";
 import { Enemy } from "./enemy";
-import { UI } from "./ui";
+import { UI } from "./client/ui";
 import { ThirdPersonCamera } from "./camera";
+import { SPELL_REGISTRY } from "./spells";
+import { getSpellsForClass } from "./spells";
+import { ITEM_REGISTRY, getRandomLoot, getItemById } from "./items";
+import { getTalentsForClass } from "./talents";
 
 export class Game {
   scene: THREE.Scene;
@@ -33,18 +37,33 @@ export class Game {
   selectedEnemy: Enemy | null = null;
   selectionCircle: THREE.Mesh | null = null;
   damageTexts: { div: HTMLDivElement, start: number, angle: number }[] = [];
-  spellCooldown: number = 0;
-  spellLastCast: number = 0;
+  spellLastCast: number[] = Array(12).fill(0);
+  globalCooldown: number = 650;
+  lastGlobalCast: number = 0;
+  spellSlots: (string | null)[] = Array(12).fill(null);
+  projectiles: { mesh: THREE.Mesh, target: Enemy, damage: number, isCrit: boolean, speed: number }[] = [];
 
   enemyBarDiv: HTMLDivElement | null = null;
+  logoutBtn: HTMLButtonElement | null = null;
+  inventory: any[] = [];
+  gold: number = 0;
+  learnedTalents: Set<string> = new Set();
+  lootTarget: Enemy | null = null;
 
   lastCombatTime: number = 0;
   lastLogTime: number = 0;
   lastHpRegenTime: number = 0;
+  worldInitialized: boolean = false;
+  authUser: { email: string } | null = null;
+  characters: any[] = [];
+  currentCharacter: any | null = null;
+  loginOverlay: HTMLDivElement | null = null;
+  characterOverlay: HTMLDivElement | null = null;
 
   constructor() {
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x87ceeb);
+    this.scene.background = new THREE.Color(0x1d2433);
+    this.scene.fog = new THREE.Fog(0x1f2a38, 25, 180);
 
     this.camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
     this.renderer = new THREE.WebGLRenderer({antialias:true});
@@ -66,6 +85,18 @@ export class Game {
     this.fpsDiv.innerText = "FPS: ...";
     document.body.appendChild(this.fpsDiv);
     this.fpsDiv.style.display = "block";
+
+    // Subtle vignette overlay
+    const vignette = document.createElement("div");
+    vignette.style.position = "fixed";
+    vignette.style.top = "0";
+    vignette.style.left = "0";
+    vignette.style.width = "100vw";
+    vignette.style.height = "100vh";
+    vignette.style.pointerEvents = "none";
+    vignette.style.background = "radial-gradient(ellipse at center, rgba(0,0,0,0) 40%, rgba(0,0,0,0.45) 100%)";
+    vignette.style.zIndex = "2";
+    document.body.appendChild(vignette);
 
     // Loader overlay
     this.loaderDiv = document.createElement("div");
@@ -146,7 +177,11 @@ export class Game {
     window.addEventListener("mousedown", startAudio, { once: true });
     window.addEventListener("touchstart", startAudio, { once: true });
 
-    this.initWorld();
+    // Default loadout for new player
+    this.spellSlots[0] = "heroic_strike";
+    this.spellSlots[1] = "arcane_bolt";
+
+    this.setupLoginFlow();
 
     // Gestione hotkey spellbar (1-0,-,click)
     window.addEventListener("keydown", (e) => {
@@ -162,8 +197,24 @@ export class Game {
       if (key === "9") this.castSpell(8);
       if (key === "0") this.castSpell(9);
       if (key === "-") this.castSpell(10);
+      if (key.toLowerCase() === "p") {
+        if (this.ui) this.ui.showModal("spellbook");
+      }
       if (key === "Escape" && this.selectedEnemy) {
         this.selectedEnemy = null;
+      }
+    });
+
+    // Talenti
+    window.addEventListener("learnTalent", (e: any) => {
+      const talentId = e.detail?.talentId;
+      if (!talentId) return;
+      if (this.learnedTalents.has(talentId)) return;
+      const talent = getTalentsForClass(this.player.classId).find(t => t.id === talentId);
+      if (talent) {
+        talent.apply({ player: this.player, game: this });
+        this.learnedTalents.add(talentId);
+        this.ui.populateTalents(getTalentsForClass(this.player.classId), this.learnedTalents);
       }
     });
 
@@ -174,17 +225,20 @@ export class Game {
     this.enemyBarDiv.style.right = "32px";
     this.enemyBarDiv.style.width = "320px";
     this.enemyBarDiv.style.height = "48px";
-    this.enemyBarDiv.style.background = "rgba(30,30,30,0.92)";
-    this.enemyBarDiv.style.border = "2px solid #fff";
-    this.enemyBarDiv.style.borderRadius = "12px";
+    this.enemyBarDiv.style.background = "linear-gradient(135deg, rgba(32,24,15,0.95), rgba(18,14,9,0.95))";
+    this.enemyBarDiv.style.border = "2px solid #c49a3a";
+    this.enemyBarDiv.style.borderRadius = "14px";
     this.enemyBarDiv.style.display = "none";
     this.enemyBarDiv.style.zIndex = "10002";
-    this.enemyBarDiv.style.boxShadow = "0 2px 12px #000";
+    this.enemyBarDiv.style.boxShadow = "0 4px 16px rgba(0,0,0,0.65)";
     this.enemyBarDiv.innerHTML = `
-      <div id="enemy-bar-name" style="color:#fff;font-weight:bold;font-size:1.1rem;padding:4px 0 0 16px;"></div>
-      <div style="width:90%;height:18px;background:#333;border-radius:8px;margin:4px auto 0 auto;position:relative;">
-        <div id="enemy-bar-hp" style="height:100%;background:#ff0060;border-radius:8px;width:100%;transition:width 0.2s;"></div>
-        <div id="enemy-bar-hp-text" style="position:absolute;left:50%;top:0;transform:translateX(-50%);color:#fff;font-size:1rem;font-weight:bold;text-shadow:0 0 4px #000;">HP</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 14px 0 14px;">
+        <div id="enemy-bar-name" style="color:#f7d09b;font-weight:800;font-size:1.05rem;text-shadow:0 0 6px #000;">Enemy</div>
+        <div id="enemy-aggro" style="color:#ff6d6d;font-weight:800;font-size:0.95rem;text-shadow:0 0 8px #000;">TARGET</div>
+      </div>
+      <div style="width:90%;height:18px;background:#221414;border-radius:10px;margin:4px auto 6px auto;position:relative;overflow:hidden;border:1px solid #4b1f1f;">
+        <div id="enemy-bar-hp" style="height:100%;background:linear-gradient(90deg,#7d0f0f,#d83d3d);border-radius:10px;width:100%;transition:width 0.2s;"></div>
+        <div id="enemy-bar-hp-text" style="position:absolute;left:50%;top:0;transform:translateX(-50%);color:#fff;font-size:0.95rem;font-weight:800;text-shadow:0 0 4px #000;">HP</div>
       </div>
     `;
     document.body.appendChild(this.enemyBarDiv);
@@ -222,7 +276,7 @@ export class Game {
           slot.style.display = "flex";
           slot.style.alignItems = "center";
           slot.style.justifyContent = "center";
-          const idxFromData = slot.dataset.index ? parseInt(slot.dataset.index) : 1;
+          const idxFromData = slot.dataset.index ? parseInt(slot.dataset.index) : 0;
           slot.addEventListener("click", (e) => {
             console.log("CLICK spell-slot", i + 1, e.type, e, slot);
             e.stopPropagation();
@@ -269,6 +323,110 @@ export class Game {
       // Angolo random per effetto circolare
       const angle = Math.random() * Math.PI * 2;
       this.damageTexts.push({ div, start: performance.now(), angle });
+    });
+
+    window.addEventListener("spellSlotAssigned", (e: any) => {
+      const { slotIndex, spellId } = e.detail;
+      if (typeof slotIndex === "number") {
+        this.spellSlots[slotIndex] = spellId;
+        // Update slot visuals if icon exists
+        const slot = document.querySelector(`#spellbar .spell-slot[data-index='${slotIndex}']`) as HTMLElement | null;
+        if (slot) {
+          const spell = SPELL_REGISTRY[spellId];
+          slot.innerHTML = "";
+          const number = document.createElement("div");
+          number.textContent = `${slotIndex + 1}`;
+          number.style.position = "absolute";
+          number.style.bottom = "4px";
+          number.style.right = "6px";
+          number.style.fontSize = "0.75rem";
+          number.style.color = "#f7d09b";
+          number.style.textShadow = "0 0 4px #000";
+          slot.appendChild(number);
+          if (spell?.icon) {
+            const icon = document.createElement("img");
+            icon.src = spell.icon;
+            icon.alt = spell.name;
+            icon.style.width = "100%";
+            icon.style.height = "100%";
+            icon.style.objectFit = "cover";
+            icon.style.borderRadius = "6px";
+            slot.appendChild(icon);
+          } else {
+            const label = document.createElement("div");
+            label.textContent = spell?.name ?? spellId;
+            label.style.fontWeight = "800";
+            label.style.fontSize = "0.75rem";
+            label.style.textAlign = "center";
+            label.style.padding = "6px";
+            slot.appendChild(label);
+          }
+          slot.dataset.spellDesc = spell?.description || spell?.name || "";
+          slot.dataset.spellId = spellId;
+        }
+      }
+    });
+
+    window.addEventListener("spellSlotClear", (e: any) => {
+      const idx = e.detail?.slotIndex;
+      if (typeof idx === "number") {
+        this.spellSlots[idx] = null;
+        const slot = document.querySelector(`#spellbar .spell-slot[data-index='${idx}']`) as HTMLElement | null;
+        if (slot) {
+          slot.innerHTML = "";
+          const number = document.createElement("div");
+          number.textContent = `${idx + 1}`;
+          number.style.position = "absolute";
+          number.style.bottom = "4px";
+          number.style.right = "6px";
+          number.style.fontSize = "0.75rem";
+          number.style.color = "#f7d09b";
+          number.style.textShadow = "0 0 4px #000";
+          slot.appendChild(number);
+        }
+      }
+    });
+
+    window.addEventListener("inventoryMove", (e: any) => {
+      const { itemId, from, to, toSlot } = e.detail || {};
+      if (!itemId) return;
+      if (from === "bag") {
+        const idx = this.inventory.indexOf(itemId);
+        if (idx >= 0) this.inventory.splice(idx, 1);
+      } else if (from === "equip") {
+        Object.keys(this.currentCharacter.equipment || {}).forEach(slot => {
+          if (this.currentCharacter.equipment[slot] === itemId) this.currentCharacter.equipment[slot] = null;
+        });
+      }
+      if (to === "bag") {
+        this.inventory.push(itemId);
+      } else if (to === "equip") {
+        if (toSlot) this.currentCharacter.equipment[toSlot] = itemId;
+      } else if (to === "void") {
+        // drop/delete
+      } else if (to === "use") {
+        const item = getItemById(itemId);
+        if (item?.use) item.use({ player: this.player, game: this });
+      }
+      this.ui.populateBags(this.inventory.map((id: string)=>getItemById(id)), this.gold);
+      this.ui.populateEquipment(this.currentCharacter?.equipment || {});
+    });
+
+    // Level up banner
+    window.addEventListener("playerLevelUp", (e: any) => {
+      const div = document.createElement("div");
+      div.innerText = `Level Up! (Lv. ${e.detail.level})`;
+      div.style.position = "fixed";
+      div.style.left = "50%";
+      div.style.top = "18%";
+      div.style.transform = "translateX(-50%)";
+      div.style.color = "#f7e6b5";
+      div.style.fontSize = "2.4rem";
+      div.style.fontWeight = "900";
+      div.style.textShadow = "0 0 14px #000, 0 0 6px #b8863b";
+      div.style.zIndex = "100000";
+      document.body.appendChild(div);
+      setTimeout(() => div.remove(), 1100);
     });
 
     // Selezione nemico con click
@@ -468,19 +626,242 @@ export class Game {
     }
   }
 
-  castSpell(slot: number) {
-    // Solo slot 0 (tasto 1) attivo per ora
-    if (slot !== 0) return;
-    const now = performance.now();
-    if (now - this.spellLastCast < 1000) return;
+  setupLoginFlow() {
+    this.characters = [
+      { id: "char-1", name: "Thorin", classId: "warrior", level: 1, gold: 10, inventory: ["training_shield"], equipment: { weapon: "rusty_sword", offhand: "training_shield" } },
+      { id: "char-2", name: "Meriel", classId: "mage", level: 1, gold: 10, inventory: ["cloth_gloves"], equipment: { weapon: "apprentice_staff", hands: "cloth_gloves" } },
+      { id: "char-3", name: "Shade", classId: "rogue", level: 1, gold: 10, inventory: [], equipment: { weapon: "rogue_daggers" } },
+    ];
+    this.buildLoginOverlay();
+  }
 
-    // Spellbar slot 0
+  returnToCharacterSelect() {
+    // Stop world updates
+    this.worldInitialized = false;
+    this.clock = undefined as any;
+    this.selectedEnemy = null;
+    this.spellSlots = Array(12).fill(null);
+    // Remove player and enemies
+    if (this.player && this.player.mesh) {
+      this.scene.remove(this.player.mesh);
+    }
+    this.enemies.forEach(e => {
+      if (e.mesh) this.scene.remove(e.mesh);
+      if (e.healthBarDiv) e.healthBarDiv.remove();
+    });
+    this.enemies = [];
+    // Remove selection ring
+    if (this.selectionCircle) {
+      this.scene.remove(this.selectionCircle);
+      this.selectionCircle = null;
+    }
+    // Remove enemy bar
+    if (this.enemyBarDiv) {
+      this.enemyBarDiv.remove();
+      this.enemyBarDiv = null;
+    }
+    // Hide logout button
+    if (this.logoutBtn) this.logoutBtn.style.display = "none";
+    this.inventory = [];
+    this.gold = 0;
+    this.learnedTalents.clear();
+    // Remove UI overlays created by UI class
+    const spellbar = document.getElementById("spellbar");
+    if (spellbar) spellbar.remove();
+    ["modal-character","modal-spellbook","modal-talents","modal-bags"].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.remove();
+    });
+    const toolbar = document.getElementById("wow-toolbar");
+    if (toolbar) toolbar.remove();
+
+    // Show character selection again
+    this.buildCharacterOverlay();
+  }
+
+  buildLoginOverlay() {
+    // Hide loader while in auth/selection
+    if (this.loaderDiv) this.loaderDiv.style.display = "none";
+    const overlay = document.createElement("div");
+    overlay.style.position = "fixed";
+    overlay.style.top = "0";
+    overlay.style.left = "0";
+    overlay.style.width = "100vw";
+    overlay.style.height = "100vh";
+    overlay.style.background = "rgba(0,0,0,0.8)";
+    overlay.style.display = "flex";
+    overlay.style.alignItems = "center";
+    overlay.style.justifyContent = "center";
+    overlay.style.zIndex = "1000001";
+    overlay.innerHTML = `
+      <div style="background:#1a140d;border:2px solid #c49a3a;border-radius:12px;padding:24px 28px;box-shadow:0 6px 20px rgba(0,0,0,0.7);width:360px;">
+        <div style="color:#f6d48b;font-weight:800;font-size:1.2rem;margin-bottom:12px;text-align:center;">Login</div>
+        <label style="color:#d8c7a1;font-size:0.95rem;">Email</label>
+        <input id="login-email" style="width:100%;margin-top:4px;margin-bottom:12px;padding:8px;border-radius:8px;border:1px solid #c49a3a;background:#0f0a07;color:#f6d48b;" value="admin@admin.it" />
+        <label style="color:#d8c7a1;font-size:0.95rem;">Password</label>
+        <input id="login-pass" type="password" style="width:100%;margin-top:4px;margin-bottom:16px;padding:8px;border-radius:8px;border:1px solid #c49a3a;background:#0f0a07;color:#f6d48b;" value="admin" />
+        <button id="login-btn" style="width:100%;padding:10px;border-radius:10px;border:1px solid #c49a3a;background:#2b1a0f;color:#f6d48b;font-weight:800;cursor:pointer;">Enter</button>
+        <div id="login-error" style="margin-top:10px;color:#ff7b7b;font-size:0.9rem;display:none;text-align:center;">Invalid credentials</div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    this.loginOverlay = overlay;
+    const btn = overlay.querySelector("#login-btn") as HTMLButtonElement;
+    btn.onclick = () => {
+      const email = (overlay.querySelector("#login-email") as HTMLInputElement).value;
+      const pass = (overlay.querySelector("#login-pass") as HTMLInputElement).value;
+      if (email === "admin@admin.it" && pass === "admin") {
+        this.authUser = { email };
+        overlay.remove();
+        this.loginOverlay = null;
+        this.buildCharacterOverlay();
+      } else {
+        const err = overlay.querySelector("#login-error") as HTMLDivElement;
+        if (err) err.style.display = "block";
+      }
+    };
+  }
+
+  buildCharacterOverlay() {
+    if (this.loaderDiv) this.loaderDiv.style.display = "none";
+    const overlay = document.createElement("div");
+    overlay.style.position = "fixed";
+    overlay.style.top = "0";
+    overlay.style.left = "0";
+    overlay.style.width = "100vw";
+    overlay.style.height = "100vh";
+    overlay.style.background = "rgba(0,0,0,0.8)";
+    overlay.style.display = "flex";
+    overlay.style.alignItems = "center";
+    overlay.style.justifyContent = "center";
+    overlay.style.zIndex = "1000001";
+
+    const wrap = document.createElement("div");
+    wrap.style.background = "#1a140d";
+    wrap.style.border = "2px solid #c49a3a";
+    wrap.style.borderRadius = "12px";
+    wrap.style.padding = "18px 22px";
+    wrap.style.boxShadow = "0 6px 20px rgba(0,0,0,0.7)";
+    wrap.style.width = "560px";
+    wrap.style.maxHeight = "80vh";
+    wrap.style.overflow = "auto";
+
+    const title = document.createElement("div");
+    title.textContent = "Select your character";
+    title.style.color = "#f6d48b";
+    title.style.fontWeight = "800";
+    title.style.fontSize = "1.2rem";
+    title.style.marginBottom = "10px";
+    wrap.appendChild(title);
+
+    const list = document.createElement("div");
+    list.style.display = "grid";
+    list.style.gridTemplateColumns = "1fr 1fr";
+    list.style.gap = "8px";
+    const renderList = () => {
+      list.innerHTML = "";
+    this.characters.forEach((c) => {
+      const card = document.createElement("div");
+      card.style.background = "rgba(24,18,12,0.9)";
+      card.style.border = "1px solid #c49a3a";
+        card.style.borderRadius = "10px";
+        card.style.padding = "10px";
+        card.style.cursor = "pointer";
+        card.innerHTML = `<div style="color:#f6d48b;font-weight:800;">${c.name}</div><div style="color:#d8c7a1;">${c.classId} - Lv ${c.level}</div>`;
+        card.onclick = () => {
+          this.currentCharacter = c;
+          overlay.remove();
+          this.characterOverlay = null;
+          this.initWorld();
+        };
+        list.appendChild(card);
+      });
+    };
+    renderList();
+    wrap.appendChild(list);
+
+    const createTitle = document.createElement("div");
+    createTitle.textContent = "Create new character";
+    createTitle.style.color = "#f6d48b";
+    createTitle.style.fontWeight = "800";
+    createTitle.style.marginTop = "12px";
+    wrap.appendChild(createTitle);
+
+    const nameInput = document.createElement("input");
+    nameInput.placeholder = "Name";
+    nameInput.style.width = "100%";
+    nameInput.style.marginTop = "6px";
+    nameInput.style.marginBottom = "6px";
+    nameInput.style.padding = "8px";
+    nameInput.style.borderRadius = "8px";
+    nameInput.style.border = "1px solid #c49a3a";
+    nameInput.style.background = "#0f0a07";
+    nameInput.style.color = "#f6d48b";
+    wrap.appendChild(nameInput);
+
+    const classSelect = document.createElement("select");
+    classSelect.style.width = "100%";
+    classSelect.style.padding = "8px";
+    classSelect.style.borderRadius = "8px";
+    classSelect.style.border = "1px solid #c49a3a";
+    classSelect.style.background = "#0f0a07";
+    classSelect.style.color = "#f6d48b";
+    ["warrior","mage","rogue"].forEach((id) => {
+      const opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = id[0].toUpperCase() + id.slice(1);
+      classSelect.appendChild(opt);
+    });
+    wrap.appendChild(classSelect);
+
+    const createBtn = document.createElement("button");
+    createBtn.textContent = "Create";
+    createBtn.style.marginTop = "10px";
+    createBtn.style.width = "100%";
+    createBtn.style.padding = "10px";
+    createBtn.style.borderRadius = "10px";
+    createBtn.style.border = "1px solid #c49a3a";
+    createBtn.style.background = "#2b1a0f";
+    createBtn.style.color = "#f6d48b";
+    createBtn.style.fontWeight = "800";
+    createBtn.style.cursor = "pointer";
+    createBtn.onclick = () => {
+      const name = nameInput.value || "Hero";
+      const classId = classSelect.value || "warrior";
+      const starter = this.getStarterLoadout(classId);
+      const newChar = { id: `char-${Date.now()}`, name, classId, level: 1, gold: starter.gold, inventory: starter.inventory, equipment: starter.equipment };
+      this.characters.push(newChar);
+      renderList();
+    };
+    wrap.appendChild(createBtn);
+
+    overlay.appendChild(wrap);
+    document.body.appendChild(overlay);
+    this.characterOverlay = overlay;
+  }
+
+  getStarterLoadout(classId: string) {
+    if (classId === "mage") {
+      return { gold: 10, inventory: ["apprentice_staff", "cloth_gloves"], equipment: { weapon: "apprentice_staff", hands: "cloth_gloves" } };
+    }
+    if (classId === "rogue") {
+      return { gold: 10, inventory: ["rogue_daggers"], equipment: { weapon: "rogue_daggers" } };
+    }
+    return { gold: 10, inventory: ["rusty_sword", "training_shield"], equipment: { weapon: "rusty_sword", offhand: "training_shield" } };
+  }
+
+  castSpell(slot: number) {
+    const spellId = this.spellSlots[slot] ?? null;
+    if (!spellId) return;
+    const config = SPELL_REGISTRY[spellId];
+    if (!config) return;
+    const now = performance.now();
+
     const spellbar = document.getElementById("spellbar");
     let slots: HTMLCollectionOf<Element> | null = null;
     if (spellbar) slots = spellbar.getElementsByClassName("spell-slot");
 
-    // Funzione overlay cooldown SVG
-    function showCooldownOverlay(slotElem: Element) {
+    function showCooldownOverlay(slotElem: Element, durationMs: number) {
       let svg = slotElem.querySelector("svg.cooldown-svg") as SVGSVGElement;
       if (!svg) {
         svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -498,7 +879,6 @@ export class Game {
         slotElem.setAttribute("style", (slotElem.getAttribute("style") || "") + ";position:relative;");
       }
       svg.innerHTML = "";
-      // Cerchio scuro di base
       let bg = document.createElementNS("http://www.w3.org/2000/svg", "circle");
       bg.setAttribute("cx", "28");
       bg.setAttribute("cy", "28");
@@ -506,17 +886,15 @@ export class Game {
       bg.setAttribute("fill", "rgba(0,0,0,0.55)");
       svg.appendChild(bg);
 
-      // Cerchio animato (cooldown)
       let arc = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      arc.setAttribute("fill", "#222");
-      arc.setAttribute("opacity", "0.85");
+      arc.setAttribute("fill", "#0c0c0c");
+      arc.setAttribute("opacity", "0.9");
       svg.appendChild(arc);
 
       let start = performance.now();
       function animate() {
-        let t = (performance.now() - start) / 1000;
+        let t = (performance.now() - start) / durationMs;
         if (t > 1) t = 1;
-        // Angolo da 0 a 2PI*(1-t)
         const angle = 2 * Math.PI * (1 - t);
         const x = 28 + 26 * Math.sin(angle);
         const y = 28 - 26 * Math.cos(angle);
@@ -527,14 +905,13 @@ export class Game {
           L 28 28 Z
         `;
         arc.setAttribute("d", d);
-        arc.setAttribute("opacity", `${0.85 * (1 - t)}`);
+        arc.setAttribute("opacity", `${0.9 * (1 - t)}`);
         if (t < 1) requestAnimationFrame(animate);
         else svg.remove();
       }
       animate();
     }
 
-    // Messaggio sopra spellbar
     function showSpellMsg(msg: string) {
       let el = document.getElementById("spellbar-msg");
       if (!el) {
@@ -544,13 +921,14 @@ export class Game {
         el.style.left = "50%";
         el.style.bottom = "90px";
         el.style.transform = "translateX(-50%)";
-        el.style.background = "#222";
-        el.style.color = "#fff";
+        el.style.background = "rgba(14,10,6,0.9)";
+        el.style.color = "#f6d48b";
         el.style.fontWeight = "bold";
         el.style.fontSize = "1.2rem";
         el.style.padding = "8px 24px";
         el.style.borderRadius = "10px";
         el.style.zIndex = "10001";
+        el.style.border = "1px solid #c49a3a";
         el.style.boxShadow = "0 2px 12px #000";
         document.body.appendChild(el);
       }
@@ -563,95 +941,127 @@ export class Game {
       }, 1000);
     }
 
-    // Validazione nemico selezionato e distanza
-    if (!this.selectedEnemy || !this.selectedEnemy.isAlive()) {
+    if (config.cost > this.player.mana) {
+      showSpellMsg("Not enough mana");
+      return;
+    }
+
+    let target = this.selectedEnemy;
+    if (!target || !target.isAlive()) {
       showSpellMsg("No enemy selected");
       return;
     }
-    if (this.player.mesh.position.distanceTo(this.selectedEnemy.mesh.position) >= 3.5) {
+    const dist = this.player.mesh.position.distanceTo(target.mesh.position);
+    if (dist > config.range) {
       showSpellMsg("Too far away");
       return;
     }
+    if (now - this.lastGlobalCast < this.globalCooldown) {
+      showSpellMsg("On global cooldown");
+      return;
+    }
+    if (now - this.spellLastCast[slot] < config.cooldown) {
+      showSpellMsg("Spell not ready");
+      return;
+    }
 
-    // Mostra overlay cooldown SVG SOLO se la spell parte
-    if (slots && slots.length > 0) showCooldownOverlay(slots[0]);
-    this.spellLastCast = now;
-    // Combat timer: resetta ogni attacco
+    // Spellbar overlay
+    if (slots && slots[slot]) showCooldownOverlay(slots[slot], config.cooldown);
+    this.spellLastCast[slot] = now;
+    this.lastGlobalCast = now;
+    this.player.mana -= config.cost;
     this.lastCombatTime = performance.now();
 
-    // Calcolo critico: 10% chance
-    let isCrit = Math.random() < 0.1;
-    let dmg = this.player.attackDamage * (isCrit ? 2 : 1);
+    // Execute spell logic
+    const dmg = config.execute({ player: this.player, game: this, target });
 
-    // Mostra danno inflitto in bianco sopra il nemico
-    const div = document.createElement("div");
-    div.innerText = isCrit ? `CRIT -${dmg}` : `-${dmg}`;
-    div.style.position = "fixed";
-    div.style.color = "#fff";
-    div.style.fontWeight = "bold";
-    div.style.fontSize = isCrit ? "44px" : "28px";
-    div.style.pointerEvents = "none";
-    div.style.textShadow = "0 0 12px #000, 0 0 2px #fff";
-    div.style.zIndex = "99999";
-    div.style.padding = "2px 14px";
-    div.style.borderRadius = "10px";
-    div.style.background = "rgba(0,0,0,0.15)";
-    if (isCrit) div.style.letterSpacing = "2px";
-    document.body.appendChild(div);
-    // Angolo random per effetto circolare
-    const angle = Math.random() * Math.PI * 2;
-    const enemy = this.selectedEnemy;
-    let alive = true;
-    const updateDmg = () => {
-      if (!enemy.mesh.parent || !alive) { div.remove(); return; }
-      const pos = enemy.mesh.position.clone();
-      pos.y += 2.2;
-      const vector = pos.project(this.camera);
-      const t = (performance.now() - now) / 1000;
-      const radius = 60;
-      const theta = angle + t * Math.PI;
-      const x = (vector.x * 0.5 + 0.5) * window.innerWidth + Math.cos(theta) * radius;
-      const y = (-vector.y * 0.5 + 0.5) * window.innerHeight + Math.sin(theta) * radius;
-      div.style.left = `${x}px`;
-      div.style.top = `${y}px`;
-      div.style.opacity = `${1 - t}`;
-      if (t < 1) requestAnimationFrame(updateDmg);
-      else div.remove();
-    };
-    const now2 = performance.now();
-    updateDmg();
+    // Visual feedback (shared)
+    if (dmg > 0) {
+      const div = document.createElement("div");
+      div.innerText = `-${dmg}`;
+      div.style.position = "fixed";
+      div.style.color = "#fff";
+      div.style.fontWeight = "bold";
+      div.style.fontSize = "28px";
+      div.style.pointerEvents = "none";
+      div.style.textShadow = "0 0 12px #000, 0 0 2px #fff";
+      div.style.zIndex = "99999";
+      div.style.padding = "2px 14px";
+      div.style.borderRadius = "10px";
+      div.style.background = "rgba(0,0,0,0.15)";
+      document.body.appendChild(div);
+      const angle = Math.random() * Math.PI * 2;
+      const updateDmg = () => {
+        if (!target.mesh.parent) { div.remove(); return; }
+        const pos = target.mesh.position.clone();
+        pos.y += 2.2;
+        const vector = pos.project(this.camera);
+        const t = (performance.now() - now) / 1000;
+        const radius = 60;
+        const theta = angle + t * Math.PI;
+        const x = (vector.x * 0.5 + 0.5) * window.innerWidth + Math.cos(theta) * radius;
+        const y = (-vector.y * 0.5 + 0.5) * window.innerHeight + Math.sin(theta) * radius;
+        div.style.left = `${x}px`;
+        div.style.top = `${y}px`;
+        div.style.opacity = `${1 - t}`;
+        if (t < 1) requestAnimationFrame(updateDmg);
+        else div.remove();
+      };
+      updateDmg();
+    }
 
-    this.selectedEnemy.takeDamage(dmg);
-    // Se muore, rimuovi dalla scena e deseleziona e rimuovi subito il danno
-    if (!this.selectedEnemy.isAlive()) {
-      this.scene.remove(this.selectedEnemy.mesh);
-      this.selectedEnemy = null;
-      alive = false;
-      div.remove();
+    // Spawn projectile for ranged
+    if (config.kind === "ranged") {
+      const boltGeo = new THREE.SphereGeometry(0.12, 8, 8);
+      const boltMat = new THREE.MeshBasicMaterial({ color: 0x6ec3ff });
+      const bolt = new THREE.Mesh(boltGeo, boltMat);
+      bolt.position.copy(this.player.mesh.position);
+      bolt.position.y += 1.4;
+      this.scene.add(bolt);
+      this.projectiles.push({ mesh: bolt, target, damage: 0, isCrit: false, speed: 0.3 });
     }
   }
 
   async initWorld() {
-    // Luce
-    const light = new THREE.DirectionalLight(0xffffff, 1);
-    light.position.set(10,10,10);
+    if (this.worldInitialized) return;
+    this.worldInitialized = true;
+    if (this.loaderDiv) this.loaderDiv.style.display = "flex";
+    // Luce e atmosfera tipo WoW
+    const ambient = new THREE.AmbientLight(0xc7b9a2, 0.55);
+    this.scene.add(ambient);
+    const light = new THREE.DirectionalLight(0xfff0d0, 1.05);
+    light.position.set(18,24,12);
     this.scene.add(light);
 
-    // Terreno con texture prato
-    const textureLoader = new THREE.TextureLoader();
-    const grassTexture = textureLoader.load("https://threejs.org/examples/textures/terrain/grasslight-big.jpg");
+    // Terreno procedurale (nessun asset remoto)
+    const canvas = document.createElement("canvas");
+    canvas.width = 64;
+    canvas.height = 64;
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      const grd = ctx.createLinearGradient(0, 0, 64, 64);
+      grd.addColorStop(0, "#3f4b2c");
+      grd.addColorStop(1, "#2f381f");
+      ctx.fillStyle = grd;
+      ctx.fillRect(0, 0, 64, 64);
+      for (let i = 0; i < 220; i++) {
+        ctx.fillStyle = `rgba(255,255,255,${0.05 + Math.random() * 0.08})`;
+        ctx.fillRect(Math.random() * 64, Math.random() * 64, 1 + Math.random() * 2, 1 + Math.random() * 2);
+      }
+    }
+    const grassTexture = new THREE.CanvasTexture(canvas);
     grassTexture.wrapS = grassTexture.wrapT = THREE.RepeatWrapping;
-    grassTexture.repeat.set(160, 160);
+    grassTexture.repeat.set(120, 120);
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(1000, 1000),
-      new THREE.MeshStandardMaterial({ map: grassTexture })
+      new THREE.MeshStandardMaterial({ map: grassTexture, roughness: 1, metalness: 0 })
     );
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
     this.scene.add(ground);
 
     // Alberi semplici (più numerosi)
-    for (let i = 0; i < 200; i++) {
+    for (let i = 0; i < 140; i++) {
       const trunk = new THREE.Mesh(
         new THREE.CylinderGeometry(0.3, 0.5, 3),
         new THREE.MeshStandardMaterial({ color: 0x8b5a2b })
@@ -674,7 +1084,7 @@ export class Game {
     }
 
     // Rocce semplici (più numerose)
-    for (let i = 0; i < 120; i++) {
+    for (let i = 0; i < 80; i++) {
       const rock = new THREE.Mesh(
         new THREE.IcosahedronGeometry(1, 0),
         new THREE.MeshStandardMaterial({ color: 0x888888 })
@@ -691,7 +1101,8 @@ export class Game {
     }
 
     // Posiziona il player lontano dal nemico e rivolto verso di lui
-    this.player = new Player();
+    const classId = this.currentCharacter?.classId ?? "warrior";
+    this.player = new Player(classId);
     this.player.mesh.position.set(5, 1, -15); // x=5, y=1, z=-15
 
     // Calcola direzione verso il nemico (5, 1, 5)
@@ -701,6 +1112,49 @@ export class Game {
 
     this.cameraControl = new ThirdPersonCamera(this.camera, this.player);
     this.scene.add(this.player.mesh);
+
+    // Popola spellbook UI con le spell della classe
+    const classSpells = getSpellsForClass(this.player.classId);
+    this.ui = new UI();
+    this.ui.populateSpellbook(classSpells.map(s => ({ id: s.id, name: s.name, icon: s.icon, description: s.description })));
+    this.ui.populateBags(this.inventory.map(id=>getItemById(id)), this.gold);
+    this.ui.populateTalents(getTalentsForClass(this.player.classId), this.learnedTalents);
+    const equipObj: Record<string, any> = {};
+    const equipIds = this.currentCharacter?.equipment || {};
+    Object.keys(equipIds || {}).forEach(slot => {
+      const id = (equipIds as any)[slot];
+      equipObj[slot] = id ? getItemById(id) : null;
+    });
+    this.ui.populateEquipment(equipObj);
+    this.clock = new THREE.Clock();
+
+    // Logout button
+    if (!this.logoutBtn) {
+      const btn = document.createElement("button");
+      btn.id = "logout-btn";
+      btn.textContent = "Exit Character";
+      btn.style.position = "fixed";
+      btn.style.left = "20px";
+      btn.style.bottom = "20px";
+      btn.style.padding = "10px 14px";
+      btn.style.borderRadius = "10px";
+      btn.style.border = "1px solid #c49a3a";
+      btn.style.background = "linear-gradient(135deg, #2a1e14, #1a120c)";
+      btn.style.color = "#f6d48b";
+      btn.style.fontWeight = "800";
+      btn.style.zIndex = "10004";
+      btn.onclick = () => this.returnToCharacterSelect();
+      document.body.appendChild(btn);
+      this.logoutBtn = btn;
+    } else {
+      this.logoutBtn.style.display = "block";
+    }
+
+    // Riempie gli slot iniziali
+    classSpells.slice(0, 2).forEach((spell, idx) => {
+      this.spellSlots[idx] = spell.id;
+      window.dispatchEvent(new CustomEvent("spellSlotAssigned", { detail: { slotIndex: idx, spellId: spell.id } }));
+    });
 
     // Carica prefab zombie
     // Usa GLTFLoader importato
@@ -721,7 +1175,7 @@ export class Game {
     });
 
     // Spawna molti nemici sparsi per la mappa usando il prefab
-    for (let i = 0; i < 60; i++) {
+    for (let i = 0; i < 45; i++) {
       const x = Math.random() * 980 - 490;
       const z = Math.random() * 980 - 490;
       const enemy = new Enemy(x, z, zombiePrefab);
@@ -729,9 +1183,6 @@ export class Game {
       this.scene.add(enemy.mesh);
       if (i % 10 === 0) await new Promise(r => setTimeout(r, 0));
     }
-
-    this.ui = new UI();
-    this.clock = new THREE.Clock();
 
     window.addEventListener("keydown", (e)=>{
       this.keys.add(e.key.toLowerCase());
@@ -769,6 +1220,48 @@ export class Game {
       if (e.button === 2) this.rightMouseDown = true;
       if (e.button === 0) this.mouseLeftDown = true;
     });
+    // Right click loot on dead enemies
+    window.addEventListener("mousedown", (event) => {
+      if (event.button !== 2) return;
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(this.mousePos, this.camera);
+      let found: Enemy | null = null;
+      for (const enemy of this.enemies) {
+        const intersects = raycaster.intersectObject(enemy.mesh, true);
+        if (intersects.length > 0) {
+          found = enemy;
+          break;
+        }
+      }
+      if (found && !found.isAlive()) {
+        // despawn if empty loot
+        if (!found.loot || found.loot.length === 0) {
+          this.scene.remove(found.mesh);
+          return;
+        }
+        this.lootTarget = found;
+        const handleTake = (itemId: string) => {
+          if (!this.lootTarget) return;
+          const idx = this.lootTarget.loot.indexOf(itemId);
+          if (idx >= 0) this.lootTarget.loot.splice(idx, 1);
+          if (itemId.startsWith("gold_")) {
+            const amt = parseInt(itemId.replace("gold_",""),10) || 0;
+            this.gold += amt;
+          } else {
+            this.inventory.push(itemId);
+          }
+          this.ui.populateBags(this.inventory.map(id=>getItemById(id)), this.gold);
+          if (this.lootTarget.loot.length === 0) {
+            this.ui.hideLootWindow();
+            this.lootTarget = null;
+            this.scene.remove(found.mesh);
+          } else {
+            this.ui.showLootWindow(this.lootTarget.loot, handleTake);
+          }
+        };
+        this.ui.showLootWindow(found.loot, handleTake);
+      }
+    });
     window.addEventListener("mouseup", (e) => {
       if (e.button === 2) this.rightMouseDown = false;
       if (e.button === 0) this.mouseLeftDown = false;
@@ -794,6 +1287,7 @@ export class Game {
   }
 
   handleAttack() {
+    this.lastCombatTime = performance.now();
     const ray = this.player.getAttackRay();
     const enemyMeshes = this.enemies.filter(e=>e.isAlive()).map(e=>e.mesh);
     const intersects = ray.intersectObjects(enemyMeshes);
@@ -817,11 +1311,15 @@ export class Game {
       this.scene.add(enemy.mesh);
     }
 
-    this.ui.updatePlayerHealth(this.player.hp, this.player.mana ?? 100, this.player.maxHp ?? 100, this.player.maxMana ?? 100);
+    this.ui.updatePlayerHealth(this.player.hp, this.player.mana ?? 100, this.player.maxHp ?? 100, this.player.maxMana ?? 100, this.player.xp, this.player.xpToNext, this.player.level);
   }
 
   animate = () => {
     requestAnimationFrame(this.animate);
+
+    if (!this.worldInitialized || !this.clock || !this.player) {
+      return;
+    }
 
     const delta = this.clock.getDelta();
 
@@ -848,6 +1346,28 @@ export class Game {
 
     // Logga ANIMATE FRAME e now ogni ciclo
     // console.log("ANIMATE FRAME", now);
+
+    // Avanza i proiettili magici
+    this.projectiles = this.projectiles.filter(p => {
+      if (!p.target || !p.target.isAlive()) {
+        this.scene.remove(p.mesh);
+        return false;
+      }
+      const targetPos = p.target.mesh.position.clone();
+      targetPos.y += 1.2;
+      const dir = targetPos.clone().sub(p.mesh.position);
+      const dist = dir.length();
+      dir.normalize();
+      p.mesh.position.addScaledVector(dir, p.speed);
+      if (dist < 0.25) {
+        if (p.damage > 0) {
+          p.target.takeDamage(p.damage);
+        }
+        this.scene.remove(p.mesh);
+        return false;
+      }
+      return true;
+    });
 
     this.damageTexts = this.damageTexts.filter(({ div, start, angle }) => {
       const t = (now - start) / 1000;
@@ -907,7 +1427,9 @@ export class Game {
         const nameDiv = this.enemyBarDiv.querySelector("#enemy-bar-name") as HTMLDivElement;
         const hpDiv = this.enemyBarDiv.querySelector("#enemy-bar-hp") as HTMLDivElement;
         const hpText = this.enemyBarDiv.querySelector("#enemy-bar-hp-text") as HTMLDivElement;
+        const aggro = this.enemyBarDiv.querySelector("#enemy-aggro") as HTMLDivElement;
         if (nameDiv) nameDiv.innerText = "Enemy";
+        if (aggro) aggro.innerText = "TARGET";
         if (hpDiv && hpText) {
           const hp = Math.max(0, this.selectedEnemy.hp);
           const maxHp = this.selectedEnemy.maxHp || 100;
@@ -943,7 +1465,7 @@ export class Game {
       if (this.selectedEnemy && this.selectedEnemy.isAlive()) {
         if (!this.selectionCircle) {
           const geometry = new THREE.RingGeometry(1.5, 2, 48);
-          const material = new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0.5, side: THREE.DoubleSide });
+          const material = new THREE.MeshBasicMaterial({ color: 0xffd38a, transparent: true, opacity: 0.55, side: THREE.DoubleSide });
           this.selectionCircle = new THREE.Mesh(geometry, material);
           this.selectionCircle.rotation.x = -Math.PI / 2;
           this.selectionCircle.renderOrder = 999;
@@ -964,8 +1486,8 @@ export class Game {
         this.selectionCircle.visible = true;
         // Debug: colore/materiale ben visibile
         if (this.selectionCircle.material instanceof THREE.MeshBasicMaterial) {
-          this.selectionCircle.material.color.set(0xff0000);
-          this.selectionCircle.material.opacity = 0.5;
+          this.selectionCircle.material.color.set(0xffd38a);
+          this.selectionCircle.material.opacity = 0.55;
         }
       } else if (this.selectionCircle) {
         this.selectionCircle.visible = false;
@@ -1061,9 +1583,45 @@ export class Game {
       if (e.healthBarDiv) {
         e.healthBarDiv.style.display = this.healthBarsVisible && e.isAlive() ? "block" : "none";
       }
+      // Cursor changes if corpse has loot
+      if (!e.isAlive() && e.loot && e.loot.length > 0) {
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(this.mousePos, this.camera);
+        const intersects = raycaster.intersectObject(e.mesh, true);
+        if (intersects.length > 0) {
+          document.body.style.cursor = "url('/cursors/Pointer_bag_on_32x32.cur'), auto";
+        }
+      }
     });
 
-    this.ui.updatePlayerHealth(this.player.hp, this.player.mana, this.player.maxHp, this.player.maxMana);
+    // Consegna XP; loot resta sul corpo
+    this.enemies.forEach(e => {
+      if (!e.isAlive() && !e.rewardGranted) {
+        e.rewardGranted = true;
+        this.player.gainXp(e.xpWorth);
+        const lootCount = 1 + Math.floor(Math.random() * 3);
+        e.loot = [];
+        for (let i = 0; i < lootCount; i++) e.loot.push(getRandomLoot().id);
+        // guaranteed gold token
+        e.loot.push("gold_" + (5 + Math.floor(Math.random() * 10)));
+        if (this.selectedEnemy === e) this.selectedEnemy = null;
+        const msg = document.createElement("div");
+        msg.innerText = `+${e.xpWorth} XP`;
+        msg.style.position = "fixed";
+        msg.style.left = "50%";
+        msg.style.top = "22%";
+        msg.style.transform = "translateX(-50%)";
+        msg.style.color = "#d9c07a";
+        msg.style.fontSize = "1.5rem";
+        msg.style.fontWeight = "bold";
+        msg.style.textShadow = "0 0 8px #000";
+        msg.style.zIndex = "100000";
+        document.body.appendChild(msg);
+        setTimeout(() => msg.remove(), 600);
+      }
+    });
+
+    this.ui.updatePlayerHealth(this.player.hp, this.player.mana, this.player.maxHp, this.player.maxMana, this.player.xp, this.player.xpToNext, this.player.level);
 
     // Rimuovi le healthbar degli enemy morti
     this.enemies.forEach(e => {

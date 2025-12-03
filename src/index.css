@@ -1,3 +1,9 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+body {
+  font-family: "Georgia", "Times New Roman", serif;
+  background: radial-gradient(circle at 50% 20%, rgba(80,70,50,0.35), rgba(10,10,14,0.95));
+  color: #f7d09b;
+}

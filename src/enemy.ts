@@ -14,6 +14,9 @@ export class Enemy {
   damage: number = 5;
   cooldown: number = 1000;
   lastAttack: number = 0;
+  xpWorth: number = 35;
+  rewardGranted: boolean = false;
+  loot: string[] = [];
 
   mixer?: THREE.AnimationMixer;
   actions: { [name: string]: THREE.AnimationAction } = {};
@@ -157,8 +160,6 @@ export class Enemy {
     }
 
     if (!this.alive) {
-      // caduta mesh
-      this.mesh.position.y -= 0.02;
       this.healthBarDiv.style.display = "none";
       return;
     }

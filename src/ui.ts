@@ -1,3 +1,5 @@
+import { Item } from "./types";
+
 export class UI {
   playerHealthBar: HTMLDivElement;
   gameOverOverlay: HTMLDivElement;
@@ -19,6 +21,9 @@ export class UI {
   lootItems: any[] = [];
   lootPage: number = 0;
   lootOnTake: ((id: string) => void) | null = null;
+  chatBox!: HTMLDivElement;
+  chatList!: HTMLDivElement;
+  chatInput!: HTMLInputElement;
 
   constructor(){
     this.playerHealthBar = document.getElementById("ui-player-health-bar") as HTMLDivElement;
@@ -163,6 +168,8 @@ export class UI {
     this.buildModals();
     this.attachToolbar();
     this.buildLootWindow();
+    this.bindModalHotkeys();
+    this.buildChat();
   }
 
   updatePlayerHealth(hp: number, mana?: number, maxHp?: number, maxMana?: number, xp?: number, xpToNext?: number, level?: number) {
@@ -199,29 +206,18 @@ export class UI {
       const overlay = document.createElement("div");
       overlay.id = id;
       overlay.style.position = "fixed";
-      overlay.style.top = "0";
-      overlay.style.left = "0";
-      overlay.style.width = "100vw";
-      overlay.style.height = "100vh";
-      overlay.style.background = "rgba(0,0,0,0.6)";
+      overlay.style.top = "50%";
+      overlay.style.left = "50%";
+      overlay.style.transform = "translate(-50%, -50%)";
+      overlay.style.width = "580px";
+      overlay.style.height = "420px";
+      overlay.style.background = "linear-gradient(135deg, rgba(26,18,10,0.92), rgba(14,10,6,0.95))";
+      overlay.style.border = "2px solid #c49a3a";
+      overlay.style.borderRadius = "14px";
+      overlay.style.boxShadow = "0 8px 22px rgba(0,0,0,0.75)";
       overlay.style.display = "none";
-      overlay.style.alignItems = "center";
-      overlay.style.justifyContent = "center";
+      overlay.style.flexDirection = "column";
       overlay.style.zIndex = "10005";
-
-      const windowBox = document.createElement("div");
-      windowBox.style.width = "580px";
-      windowBox.style.height = "420px";
-      windowBox.style.background = "linear-gradient(135deg, rgba(26,18,10,0.92), rgba(14,10,6,0.95))";
-      windowBox.style.border = "2px solid #c49a3a";
-      windowBox.style.borderRadius = "14px";
-      windowBox.style.boxShadow = "0 8px 22px rgba(0,0,0,0.75)";
-      windowBox.style.display = "flex";
-      windowBox.style.flexDirection = "column";
-      windowBox.style.position = "absolute";
-      windowBox.style.left = "50%";
-      windowBox.style.top = "50%";
-      windowBox.style.transform = "translate(-50%, -50%)";
 
       const header = document.createElement("div");
       header.style.display = "flex";
@@ -236,7 +232,7 @@ export class UI {
       titleEl.textContent = title;
       header.appendChild(titleEl);
       const close = document.createElement("button");
-      close.textContent = "✕";
+      close.textContent = "x";
       close.style.background = "transparent";
       close.style.color = "#f6d48b";
       close.style.border = "1px solid #c49a3a";
@@ -252,20 +248,19 @@ export class UI {
       content.style.padding = "12px";
       content.style.overflow = "auto";
 
-      windowBox.appendChild(header);
-      windowBox.appendChild(content);
-      overlay.appendChild(windowBox);
+      overlay.appendChild(header);
+      overlay.appendChild(content);
       let isDragging = false;
       let dragOffset = { x: 0, y: 0 };
       header.addEventListener("mousedown", (e) => {
         isDragging = true;
-        dragOffset = { x: e.clientX - windowBox.offsetLeft, y: e.clientY - windowBox.offsetTop };
+        dragOffset = { x: e.clientX - overlay.offsetLeft, y: e.clientY - overlay.offsetTop };
       });
       document.addEventListener("mousemove", (e) => {
         if (!isDragging) return;
-        windowBox.style.left = `${e.clientX - dragOffset.x}px`;
-        windowBox.style.top = `${e.clientY - dragOffset.y}px`;
-        windowBox.style.transform = "translate(0,0)";
+        overlay.style.left = `${e.clientX - dragOffset.x}px`;
+        overlay.style.top = `${e.clientY - dragOffset.y}px`;
+        overlay.style.transform = "translate(0,0)";
       });
       document.addEventListener("mouseup", () => isDragging = false);
       document.body.appendChild(overlay);
@@ -342,7 +337,7 @@ export class UI {
       btn.style.color = "#f6d48b";
       btn.style.fontWeight = "800";
       btn.style.cursor = "pointer";
-      btn.onclick = () => this.showModal(tab);
+      btn.onclick = () => this.toggleModal(tab);
       bar.appendChild(btn);
     });
 
@@ -376,7 +371,7 @@ export class UI {
     title.textContent = "Loot";
     header.appendChild(title);
     const close = document.createElement("button");
-    close.textContent = "✕";
+    close.textContent = "x";
     close.style.background = "transparent";
     close.style.color = "#f6d48b";
     close.style.border = "1px solid #c49a3a";
@@ -451,17 +446,127 @@ export class UI {
 
   showModal(tab: "character" | "spellbook" | "talents" | "bags" = "spellbook") {
     const entry = this.modals[tab];
-    if (entry) {
-      Object.values(this.modals).forEach(m => m.overlay.style.display = "none");
-      entry.overlay.style.display = "flex";
-    }
+    if (entry) entry.overlay.style.display = "flex";
   }
 
-  hideModal() {
+  toggleModal(tab: "character" | "spellbook" | "talents" | "bags" = "spellbook") {
+    const entry = this.modals[tab];
+    if (!entry) return;
+    const isVisible = entry.overlay.style.display !== "none";
+    entry.overlay.style.display = isVisible ? "none" : "flex";
+  }
+
+  hideModal(tab?: "character" | "spellbook" | "talents" | "bags") {
+    if (tab) {
+      const entry = this.modals[tab];
+      if (entry) entry.overlay.style.display = "none";
+      return;
+    }
     Object.values(this.modals).forEach(m => m.overlay.style.display = "none");
   }
 
-  populateBags(items: { name: string; icon?: string }[], gold: number) {
+  bindModalHotkeys() {
+    window.addEventListener("keydown", (e) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
+      const key = e.key.toLowerCase();
+      if (key === "b") this.toggleModal("bags");
+      if (key === "c") this.toggleModal("character");
+      if (key === "p") this.toggleModal("spellbook");
+      if (key === "n") this.toggleModal("talents");
+    });
+  }
+
+  buildChat() {
+    const box = document.createElement("div");
+    box.id = "wow-chat";
+    box.style.position = "fixed";
+    box.style.left = "18px";
+    box.style.bottom = "110px";
+    box.style.width = "360px";
+    box.style.height = "200px";
+    box.style.display = "flex";
+    box.style.flexDirection = "column";
+    box.style.background = "linear-gradient(135deg, rgba(14,10,6,0.8), rgba(22,16,10,0.9))";
+    box.style.border = "2px solid #c49a3a";
+    box.style.borderRadius = "12px";
+    box.style.boxShadow = "0 6px 16px rgba(0,0,0,0.7)";
+    box.style.zIndex = "10003";
+    box.style.boxSizing = "border-box";
+
+    const header = document.createElement("div");
+    header.textContent = "Chat";
+    header.style.color = "#f6d48b";
+    header.style.fontWeight = "800";
+    header.style.padding = "6px 10px";
+    header.style.borderBottom = "1px solid #c49a3a";
+    box.appendChild(header);
+
+    const list = document.createElement("div");
+    list.style.flex = "1";
+    list.style.display = "flex";
+    list.style.flexDirection = "column";
+    list.style.gap = "4px";
+    list.style.overflowY = "auto";
+    list.style.padding = "8px 10px";
+    list.style.boxSizing = "border-box";
+    box.appendChild(list);
+
+    const inputWrap = document.createElement("div");
+    inputWrap.style.padding = "6px 10px 10px 10px";
+    inputWrap.style.boxSizing = "border-box";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.placeholder = "Press Enter to chat...";
+    input.style.width = "100%";
+    input.style.padding = "8px 10px";
+    input.style.borderRadius = "8px";
+    input.style.border = "1px solid #c49a3a";
+    input.style.background = "#1a120c";
+    input.style.color = "#f6d48b";
+    input.style.outline = "none";
+    input.style.boxSizing = "border-box";
+    input.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const text = input.value.trim();
+        if (!text) return;
+        this.addChatMessage("You", text);
+        window.dispatchEvent(new CustomEvent("playerChat", { detail: { text } }));
+        input.value = "";
+        input.blur();
+      }
+    });
+    inputWrap.appendChild(input);
+    box.appendChild(inputWrap);
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        const target = e.target as HTMLElement | null;
+        if (target === input) return;
+        input.focus();
+        e.preventDefault();
+      }
+    });
+
+    document.body.appendChild(box);
+    this.chatBox = box;
+    this.chatList = list;
+    this.chatInput = input;
+  }
+
+  addChatMessage(author: string, message: string) {
+    if (!this.chatList) return;
+    const row = document.createElement("div");
+    row.style.color = "#e6d5a3";
+    row.style.fontSize = "0.95rem";
+    row.innerText = `[${author}] ${message}`;
+    this.chatList.appendChild(row);
+    this.chatList.scrollTop = this.chatList.scrollHeight;
+  }
+
+  populateBags(items: Item[], gold: number) {
     if (this.goldDisplay) this.goldDisplay.textContent = `Gold: ${gold}`;
     if (!this.bagsContainer) return;
     this.bagsContainer.innerHTML = "";
@@ -504,8 +609,12 @@ export class UI {
       slot.addEventListener("contextmenu", (e) => {
         e.preventDefault();
         if (!item) return;
-        // only use if item has use function (has tooltip containing "Restores" or similar). Here rely on data attr
-        window.dispatchEvent(new CustomEvent("inventoryMove", { detail: { itemId: item.id, from: "bag", to: "use" } }));
+        // Right click: equip if it has an equipment slot, otherwise use
+        if ((item as any).slot) {
+          window.dispatchEvent(new CustomEvent("inventoryMove", { detail: { itemId: item.id, from: "bag", to: "equip", toSlot: (item as any).slot } }));
+        } else {
+          window.dispatchEvent(new CustomEvent("inventoryMove", { detail: { itemId: item.id, from: "bag", to: "use" } }));
+        }
       });
       this.bagsContainer.appendChild(slot);
     }

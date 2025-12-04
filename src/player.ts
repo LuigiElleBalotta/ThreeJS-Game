@@ -16,7 +16,7 @@ export class Player {
   xpToNext: number = 100;
   knownSpells: string[] = ["heroic_strike"];
   mesh: THREE.Mesh;
-  speed: number = 0.1;
+  speed: number = 0.35;
 
   velocityY: number = 0;
   isOnGround: boolean = true;
@@ -108,16 +108,22 @@ export class Player {
   }
 
   move(keys: Set<string>, forwardDirection?: THREE.Vector3) {
-    if (forwardDirection && keys.has("w")) {
-      // Movimento nella direzione della camera (solo XZ)
-      const dir = forwardDirection.clone().normalize().multiplyScalar(this.speed);
-      this.mesh.position.add(dir);
-    } else {
-      if (keys.has("w")) this.mesh.position.z -= this.speed;
-      if (keys.has("s")) this.mesh.position.z += this.speed;
-      if (keys.has("a")) this.mesh.position.x -= this.speed;
-      if (keys.has("d")) this.mesh.position.x += this.speed;
+    // Calcola direzione avanti in base alla camera o alla rotazione del player
+    const forward = (forwardDirection ? forwardDirection.clone() : new THREE.Vector3(0, 0, -1).applyQuaternion(this.mesh.quaternion))
+      .setY(0)
+      .normalize();
+
+    const moveDir = new THREE.Vector3();
+    if (keys.has("w")) moveDir.add(forward);
+    if (keys.has("s")) moveDir.add(forward.clone().negate());
+    if (moveDir.lengthSq() > 0) {
+      moveDir.normalize().multiplyScalar(this.speed);
+      this.mesh.position.add(moveDir);
     }
+
+    const rotSpeed = 0.06;
+    if (keys.has("a")) this.mesh.rotation.y += rotSpeed;
+    if (keys.has("d")) this.mesh.rotation.y -= rotSpeed;
   }
 
   takeDamage(amount: number) {

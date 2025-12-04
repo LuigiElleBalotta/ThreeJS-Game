@@ -7,6 +7,9 @@ import { SPELL_REGISTRY } from "./spells";
 import { getSpellsForClass } from "./spells";
 import { ITEM_REGISTRY, getRandomLoot, getItemById } from "./items";
 import { getTalentsForClass } from "./talents";
+import { creatureTemplates, creatureSpawns, CreatureTemplate, creatureTemplateLoot } from "./creatures";
+import { handleChatCommand } from "./chat/commands";
+import { gameObjectTemplates, gameObjectSpawns, buildGeometryGroup } from "./gameobjects";
 
 export class Game {
   scene: THREE.Scene;
@@ -49,6 +52,14 @@ export class Game {
   gold: number = 0;
   learnedTalents: Set<string> = new Set();
   lootTarget: Enemy | null = null;
+  npcs: { mesh: THREE.Object3D; name: string; template: CreatureTemplate }[] = [];
+  creaturePrefabs: Record<string, any> = {};
+  gameObjectPrefabs: Record<string, any> = {};
+  volatileSpawns: { creatures: any[]; gameobjects: any[] } = { creatures: [], gameobjects: [] };
+  creatureTemplates = creatureTemplates;
+  gameObjectTemplates = gameObjectTemplates;
+  paused: boolean = false;
+  pauseOverlay: HTMLDivElement | null = null;
 
   lastCombatTime: number = 0;
   lastLogTime: number = 0;
@@ -182,9 +193,12 @@ export class Game {
     this.spellSlots[1] = "arcane_bolt";
 
     this.setupLoginFlow();
+    this.setupChatCommands();
 
     // Gestione hotkey spellbar (1-0,-,click)
     window.addEventListener("keydown", (e) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
       const key = e.key;
       if (key === "1") this.castSpell(0);
       if (key === "2") this.castSpell(1);
@@ -197,11 +211,12 @@ export class Game {
       if (key === "9") this.castSpell(8);
       if (key === "0") this.castSpell(9);
       if (key === "-") this.castSpell(10);
-      if (key.toLowerCase() === "p") {
-        if (this.ui) this.ui.showModal("spellbook");
-      }
-      if (key === "Escape" && this.selectedEnemy) {
-        this.selectedEnemy = null;
+      if (key === "Escape") {
+        if (this.selectedEnemy) {
+          this.selectedEnemy = null;
+        } else {
+          this.togglePauseMenu();
+        }
       }
     });
 
@@ -406,7 +421,12 @@ export class Game {
       if (to === "bag") {
         this.inventory.push(itemId);
       } else if (to === "equip") {
-        if (toSlot) this.currentCharacter.equipment[toSlot] = itemId;
+        if (toSlot) {
+          const existing = this.currentCharacter.equipment[toSlot];
+          this.currentCharacter.equipment[toSlot] = itemId;
+          // Swap back the previous item if there was one
+          if (existing) this.inventory.push(existing);
+        }
       } else if (to === "use") {
         if (item?.use) {
           item.use({ player: this.player, game: this });
@@ -421,7 +441,13 @@ export class Game {
         if (removedFromBag) this.inventory.push(itemId);
       }
       this.ui.populateBags(this.inventory.map((id: string)=>getItemById(id)), this.gold);
-      this.ui.populateEquipment(this.currentCharacter?.equipment || {});
+      const equipIds = this.currentCharacter?.equipment || {};
+      const equipObj: Record<string, any> = {};
+      Object.keys(equipIds || {}).forEach(slot => {
+        const id = (equipIds as any)[slot];
+        equipObj[slot] = id ? getItemById(id) : null;
+      });
+      this.ui.populateEquipment(equipObj);
     });
 
     // Level up banner
@@ -448,7 +474,7 @@ export class Game {
       raycaster.setFromCamera(this.mousePos, this.camera);
       let found: Enemy | null = null;
       for (const enemy of this.enemies) {
-        if (!enemy.isAlive()) continue;
+        if (!enemy.isAlive() || !enemy.isEnemy) continue;
         const intersects = raycaster.intersectObject(enemy.mesh, true);
         if (intersects.length > 0) {
           found = enemy;
@@ -1133,9 +1159,27 @@ export class Game {
     }
 
     // Posiziona il player lontano dal nemico e rivolto verso di lui
+    const savedState = this.loadSavedState();
+    if (savedState) {
+      if (savedState.inventory) this.inventory = savedState.inventory;
+      if (typeof savedState.gold === "number") this.gold = savedState.gold;
+      if (savedState.learnedTalents) this.learnedTalents = new Set(savedState.learnedTalents);
+      if (savedState.equipment && this.currentCharacter) this.currentCharacter.equipment = savedState.equipment;
+    }
+
     const classId = this.currentCharacter?.classId ?? "warrior";
     this.player = new Player(classId);
     this.player.mesh.position.set(5, 1, -15); // x=5, y=1, z=-15
+
+    if (savedState) {
+      if (savedState.position) this.player.mesh.position.set(savedState.position.x, savedState.position.y, savedState.position.z);
+      if (typeof savedState.rotationY === "number") this.player.mesh.rotation.y = savedState.rotationY;
+      if (typeof savedState.hp === "number") this.player.hp = savedState.hp;
+      if (typeof savedState.mana === "number") this.player.mana = savedState.mana;
+      if (typeof savedState.level === "number") this.player.level = savedState.level;
+      if (typeof savedState.xp === "number") this.player.xp = savedState.xp;
+      if (typeof savedState.xpToNext === "number") this.player.xpToNext = savedState.xpToNext;
+    }
 
     // Calcola direzione verso il nemico (5, 1, 5)
     const toEnemy = new THREE.Vector3(5, 1, 5).sub(this.player.mesh.position);
@@ -1159,6 +1203,12 @@ export class Game {
     });
     this.ui.populateEquipment(equipObj);
     this.clock = new THREE.Clock();
+    if (savedState && savedState.spellSlots) {
+      this.spellSlots = savedState.spellSlots;
+      this.spellSlots.forEach((sid, idx) => {
+        if (sid) window.dispatchEvent(new CustomEvent("spellSlotAssigned", { detail: { slotIndex: idx, spellId: sid } }));
+      });
+    }
 
     // Logout button
     if (!this.logoutBtn) {
@@ -1206,17 +1256,53 @@ export class Game {
       );
     });
 
-    // Spawna molti nemici sparsi per la mappa usando il prefab
-    for (let i = 0; i < 45; i++) {
-      const x = Math.random() * 980 - 490;
-      const z = Math.random() * 980 - 490;
-      const enemy = new Enemy(x, z, zombiePrefab);
-      this.enemies.push(enemy);
-      this.scene.add(enemy.mesh);
-      if (i % 10 === 0) await new Promise(r => setTimeout(r, 0));
+    const loadByExtension = (path: string) => {
+      const ext = path.split(".").pop()?.toLowerCase();
+      const url = encodeURI(path);
+      if (ext === "glb" || ext === "gltf") {
+        return new Promise<any>((resolve) => {
+          gltfLoader.load(
+            url,
+            (gltf) => resolve(gltf),
+            undefined,
+            (err) => {
+              console.error("Failed loading GLTF", url, err);
+              resolve(null);
+            }
+          );
+        });
+      }
+      console.warn("No loader registered for model extension", ext, path);
+      return Promise.resolve(null);
+    };
+
+    // Carica prefab NPC/enemy da tabella
+    const prefabs: Record<string, any> = {};
+    const uniqueModels = Array.from(new Set(Object.values(creatureTemplates).map(t => t.model)));
+    for (const model of uniqueModels) {
+      prefabs[model] = await loadByExtension(model);
     }
+    this.creaturePrefabs = prefabs;
+
+    // Carica la mappa statica Nature.glb al posto del layout procedurale
+    await this.loadWorldMap(loadByExtension);
+
+    // Carica prefab gameobject models
+    const gameObjPrefabs: Record<string, any> = {};
+    const uniqueGoModels = Array.from(new Set(Object.values(gameObjectTemplates).map(t => t.model).filter(Boolean))) as string[];
+    for (const model of uniqueGoModels) {
+      gameObjPrefabs[model] = await loadByExtension(model);
+    }
+    this.gameObjectPrefabs = gameObjPrefabs;
+
+    // Costruisci world objects e creature
+    this.spawnGameObjects(gameObjPrefabs);
+    this.spawnCreaturesFromTable(prefabs);
+    this.loadVolatileSpawns();
 
     window.addEventListener("keydown", (e)=>{
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
       this.keys.add(e.key.toLowerCase());
       if (e.key === " ") {
         this.player.jump();
@@ -1259,6 +1345,7 @@ export class Game {
       raycaster.setFromCamera(this.mousePos, this.camera);
       let found: Enemy | null = null;
       for (const enemy of this.enemies) {
+        if (!enemy.isEnemy) continue;
         const intersects = raycaster.intersectObject(enemy.mesh, true);
         if (intersects.length > 0) {
           found = enemy;
@@ -1321,7 +1408,7 @@ export class Game {
   handleAttack() {
     this.lastCombatTime = performance.now();
     const ray = this.player.getAttackRay();
-    const enemyMeshes = this.enemies.filter(e=>e.isAlive()).map(e=>e.mesh);
+    const enemyMeshes = this.enemies.filter(e=>e.isEnemy && e.isAlive()).map(e=>e.mesh);
     const intersects = ray.intersectObjects(enemyMeshes);
     if(intersects.length>0){
       const hitEnemy = this.enemies.find(e=>e.mesh===intersects[0].object);
@@ -1354,6 +1441,11 @@ export class Game {
     }
 
     const delta = this.clock.getDelta();
+
+    if (this.paused) {
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
 
     if(!this.player.isAlive()){
       this.ui.showGameOver(()=>this.reset());
@@ -1460,8 +1552,8 @@ export class Game {
         const hpDiv = this.enemyBarDiv.querySelector("#enemy-bar-hp") as HTMLDivElement;
         const hpText = this.enemyBarDiv.querySelector("#enemy-bar-hp-text") as HTMLDivElement;
         const aggro = this.enemyBarDiv.querySelector("#enemy-aggro") as HTMLDivElement;
-        if (nameDiv) nameDiv.innerText = "Enemy";
-        if (aggro) aggro.innerText = "TARGET";
+        if (nameDiv) nameDiv.innerText = this.selectedEnemy.mesh.name || "Creature";
+        if (aggro) aggro.innerText = this.selectedEnemy.isEnemy ? "TARGET" : "FRIENDLY";
         if (hpDiv && hpText) {
           const hp = Math.max(0, this.selectedEnemy.hp);
           const maxHp = this.selectedEnemy.maxHp || 100;
@@ -1487,14 +1579,14 @@ export class Game {
           break;
         }
       }
-      if (foundEnemy) {
+      if (foundEnemy && foundEnemy.isEnemy) {
         document.body.style.cursor = "url('/cursors/Pointer_sword_on_32x32.cur'), auto";
       } else {
         document.body.style.cursor = "url('/cursors/Pointer_gauntlet_on_32x32.cur'), auto";
       }
 
       // Cerchio di selezione
-      if (this.selectedEnemy && this.selectedEnemy.isAlive()) {
+      if (this.selectedEnemy && this.selectedEnemy.isAlive() && this.selectedEnemy.isEnemy) {
         if (!this.selectionCircle) {
           const geometry = new THREE.RingGeometry(1.5, 2, 48);
           const material = new THREE.MeshBasicMaterial({ color: 0xffd38a, transparent: true, opacity: 0.55, side: THREE.DoubleSide });
@@ -1630,26 +1722,26 @@ export class Game {
     this.enemies.forEach(e => {
       if (!e.isAlive() && !e.rewardGranted) {
         e.rewardGranted = true;
-        this.player.gainXp(e.xpWorth);
-        const lootCount = 1 + Math.floor(Math.random() * 3);
-        e.loot = [];
-        for (let i = 0; i < lootCount; i++) e.loot.push(getRandomLoot().id);
-        // guaranteed gold token
-        e.loot.push("gold_" + (5 + Math.floor(Math.random() * 10)));
-        if (this.selectedEnemy === e) this.selectedEnemy = null;
-        const msg = document.createElement("div");
-        msg.innerText = `+${e.xpWorth} XP`;
-        msg.style.position = "fixed";
-        msg.style.left = "50%";
-        msg.style.top = "22%";
-        msg.style.transform = "translateX(-50%)";
-        msg.style.color = "#d9c07a";
-        msg.style.fontSize = "1.5rem";
-        msg.style.fontWeight = "bold";
-        msg.style.textShadow = "0 0 8px #000";
-        msg.style.zIndex = "100000";
-        document.body.appendChild(msg);
-        setTimeout(() => msg.remove(), 600);
+        if (e.isEnemy) {
+          this.player.gainXp(e.xpWorth);
+          e.loot = this.generateLootFor(e);
+          if (this.selectedEnemy === e) this.selectedEnemy = null;
+          const msg = document.createElement("div");
+          msg.innerText = `+${e.xpWorth} XP`;
+          msg.style.position = "fixed";
+          msg.style.left = "50%";
+          msg.style.top = "22%";
+          msg.style.transform = "translateX(-50%)";
+          msg.style.color = "#d9c07a";
+          msg.style.fontSize = "1.5rem";
+          msg.style.fontWeight = "bold";
+          msg.style.textShadow = "0 0 8px #000";
+          msg.style.zIndex = "100000";
+          document.body.appendChild(msg);
+          setTimeout(() => msg.remove(), 600);
+        } else {
+          e.loot = [];
+        }
       }
     });
 
@@ -1664,5 +1756,321 @@ export class Game {
     this.camera.lookAt(this.player.mesh.position);
 
     this.renderer.render(this.scene, this.camera);
+  }
+
+  spawnCreaturesFromTable(prefabs: Record<string, any>) {
+    creatureSpawns.forEach(spawn => {
+      const template = creatureTemplates[spawn.templateId];
+      if (!template) return;
+      const prefab = prefabs[template.model];
+      if (!prefab) return;
+      const scale = template.scale ?? 0.08;
+      const enemy = new Enemy(spawn.position.x, spawn.position.z, prefab, spawn.isEnemy, scale, 0, template.id);
+      enemy.mesh.name = template.name;
+      enemy.mesh.position.y = spawn.position.y + 1;
+      if (!template.canFly) enemy.mesh.position.y = Math.max(enemy.mesh.position.y, 0.1);
+      enemy.maxHp = template.hp;
+      enemy.hp = template.hp;
+      enemy.xpWorth = template.exp;
+      if (template.damage) enemy.damage = template.damage;
+      if (template.speed) enemy.speed = template.speed;
+      if (typeof spawn.orientation === "number") enemy.mesh.rotation.y = spawn.orientation;
+      this.enemies.push(enemy);
+      this.scene.add(enemy.mesh);
+      if (!spawn.isEnemy) this.npcs.push({ mesh: enemy.mesh, name: template.name, template });
+    });
+    if (this.ui) {
+      this.ui.addChatMessage("System", "You arrive at a small outpost bustling with NPCs. Press Enter to chat.");
+    }
+  }
+
+  spawnGameObjects(prefabs: Record<string, any>) {
+    gameObjectSpawns.forEach(spawn => {
+      const template = gameObjectTemplates[spawn.templateId];
+      if (!template) return;
+      let obj: THREE.Object3D | null = null;
+      if (template.model) {
+        const prefab = prefabs[template.model];
+        if (!prefab) return;
+        obj = prefab.scene.clone(true);
+        const scale = template.scale ?? 1;
+        obj.scale.setScalar(scale);
+      } else {
+        obj = buildGeometryGroup(template.geometry) || null;
+      }
+      if (!obj) return;
+      obj.position.set(spawn.position.x, spawn.position.y, spawn.position.z);
+      if (typeof spawn.orientation === "number") obj.rotation.y = spawn.orientation;
+      obj.traverse((child: any) => {
+        if (child.isMesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
+        }
+      });
+      this.scene.add(obj);
+    });
+  }
+
+  spawnVolatileCreature(templateId: string, position: { x: number; y: number; z: number }, orientation: number = 0, register: boolean = true) {
+    const template = creatureTemplates[templateId];
+    if (!template) return false;
+    const prefab = this.creaturePrefabs[template.model];
+    if (!prefab) return false;
+    const enemy = new Enemy(position.x, position.z, prefab, true, template.scale ?? 0.08, 0, template.id);
+    enemy.mesh.name = template.name;
+    enemy.mesh.position.y = position.y + 1;
+    if (!template.canFly) enemy.mesh.position.y = Math.max(enemy.mesh.position.y, 0.1);
+    enemy.maxHp = template.hp;
+    enemy.hp = template.hp;
+    enemy.xpWorth = template.exp;
+    if (template.damage) enemy.damage = template.damage;
+    if (template.speed) enemy.speed = template.speed;
+    enemy.mesh.rotation.y = orientation;
+    this.enemies.push(enemy);
+    this.scene.add(enemy.mesh);
+    if (register) {
+      this.volatileSpawns.creatures.push({ templateId, position, orientation });
+    }
+    return true;
+  }
+
+  spawnVolatileGameObject(templateId: string, position: { x: number; y: number; z: number }, orientation: number = 0, register: boolean = true) {
+    const template = gameObjectTemplates[templateId];
+    if (!template) return false;
+    let obj: THREE.Object3D | null = null;
+    if (template.model) {
+      const prefab = this.gameObjectPrefabs[template.model];
+      if (!prefab) return false;
+      obj = prefab.scene.clone(true);
+      obj.scale.setScalar(template.scale ?? 1);
+    } else {
+      obj = buildGeometryGroup(template.geometry) || null;
+    }
+    if (!obj) return false;
+    obj.position.set(position.x, position.y, position.z);
+    obj.rotation.y = orientation;
+    obj.traverse((child: any) => {
+      if (child.isMesh) {
+        child.castShadow = true;
+        child.receiveShadow = true;
+        this.sceneObstacles.push(child);
+      }
+    });
+    this.scene.add(obj);
+    if (register) {
+      this.volatileSpawns.gameobjects.push({ templateId, position, orientation });
+    }
+    return true;
+  }
+
+  persistVolatileSpawns() {
+    try {
+      localStorage.setItem("wowts_volatile_spawns", JSON.stringify(this.volatileSpawns));
+    } catch (err) {
+      console.warn("Failed to persist volatile spawns", err);
+    }
+  }
+
+  loadVolatileSpawns() {
+    try {
+      const raw = localStorage.getItem("wowts_volatile_spawns");
+      if (raw) {
+        this.volatileSpawns = JSON.parse(raw);
+      }
+    } catch (err) {
+      console.warn("Failed to load volatile spawns", err);
+    }
+    (this.volatileSpawns.creatures || []).forEach((c: any) => {
+      this.spawnVolatileCreature(c.templateId, c.position, c.orientation ?? 0, false);
+    });
+    (this.volatileSpawns.gameobjects || []).forEach((g: any) => {
+      this.spawnVolatileGameObject(g.templateId, g.position, g.orientation ?? 0, false);
+    });
+  }
+
+  generateLootFor(enemy: Enemy): string[] {
+    const loot: string[] = [];
+    const templateId = enemy.templateId;
+    const table = templateId ? creatureTemplateLoot[templateId] : null;
+    if (table) {
+      const goldMult = table.goldMultiplier ?? 1;
+      const gold = Math.max(1, Math.round((5 + Math.random() * 10) * goldMult));
+      loot.push(`gold_${gold}`);
+      table.items.forEach(entry => {
+        if (Math.random() <= entry.chance) {
+          const qty = entry.quantity ?? 1;
+          for (let i = 0; i < qty; i++) loot.push(entry.itemId);
+        }
+      });
+      if (!loot.length) loot.push(`gold_${Math.max(1, Math.round(10 * (table.goldMultiplier ?? 1)))}`);
+    } else {
+      const lootCount = 1 + Math.floor(Math.random() * 3);
+      for (let i = 0; i < lootCount; i++) loot.push(getRandomLoot().id);
+      loot.push("gold_" + (5 + Math.floor(Math.random() * 10)));
+    }
+    return loot;
+  }
+
+  setupChatCommands() {
+    window.addEventListener("playerChat", (e: any) => {
+      const text = e.detail?.text;
+      if (!text) return;
+      const isCommand = text.trim().startsWith(".");
+      if (isCommand) {
+        const executed = handleChatCommand(text.trim(), { game: this });
+        // If not executed, treat as normal message (already added to chat by UI)
+        if (executed) return;
+      }
+      // Non-command: nothing to do here; message already displayed by UI.
+    });
+  }
+
+  togglePauseMenu() {
+    this.paused = !this.paused;
+    if (this.paused) {
+      this.showPauseMenu();
+    } else {
+      this.hidePauseMenu();
+    }
+  }
+
+  showPauseMenu() {
+    if (this.pauseOverlay) {
+      this.pauseOverlay.style.display = "flex";
+      return;
+    }
+    const overlay = document.createElement("div");
+    overlay.id = "pause-overlay";
+    overlay.style.position = "fixed";
+    overlay.style.top = "0";
+    overlay.style.left = "0";
+    overlay.style.width = "100vw";
+    overlay.style.height = "100vh";
+    overlay.style.background = "rgba(0,0,0,0.7)";
+    overlay.style.display = "flex";
+    overlay.style.alignItems = "center";
+    overlay.style.justifyContent = "center";
+    overlay.style.zIndex = "999998";
+
+    const menu = document.createElement("div");
+    menu.style.background = "linear-gradient(135deg, #1e140c, #2a1e14)";
+    menu.style.border = "2px solid #c49a3a";
+    menu.style.borderRadius = "12px";
+    menu.style.padding = "16px";
+    menu.style.display = "flex";
+    menu.style.flexDirection = "column";
+    menu.style.gap = "10px";
+    menu.style.minWidth = "240px";
+    menu.style.boxShadow = "0 6px 18px rgba(0,0,0,0.7)";
+
+    const title = document.createElement("div");
+    title.textContent = "Paused";
+    title.style.color = "#f6d48b";
+    title.style.fontWeight = "800";
+    title.style.fontSize = "1.2rem";
+    title.style.textAlign = "center";
+    menu.appendChild(title);
+
+    const saveBtn = document.createElement("button");
+    saveBtn.textContent = "Save";
+    saveBtn.style.padding = "10px 12px";
+    saveBtn.style.borderRadius = "10px";
+    saveBtn.style.border = "1px solid #c49a3a";
+    saveBtn.style.background = "linear-gradient(135deg, #2a1e14, #1a120c)";
+    saveBtn.style.color = "#f6d48b";
+    saveBtn.style.fontWeight = "800";
+    saveBtn.style.cursor = "pointer";
+    saveBtn.onclick = () => {
+      this.saveCurrentState();
+      this.ui?.addChatMessage("System", "Game saved.");
+    };
+    menu.appendChild(saveBtn);
+
+    const changeBtn = document.createElement("button");
+    changeBtn.textContent = "Change Character";
+    changeBtn.style.padding = "10px 12px";
+    changeBtn.style.borderRadius = "10px";
+    changeBtn.style.border = "1px solid #c49a3a";
+    changeBtn.style.background = "linear-gradient(135deg, #2a1e14, #1a120c)";
+    changeBtn.style.color = "#f6d48b";
+    changeBtn.style.fontWeight = "800";
+    changeBtn.style.cursor = "pointer";
+    changeBtn.onclick = () => {
+      this.hidePauseMenu();
+      this.paused = false;
+      this.returnToCharacterSelect();
+    };
+    menu.appendChild(changeBtn);
+
+    const resumeBtn = document.createElement("button");
+    resumeBtn.textContent = "Resume";
+    resumeBtn.style.padding = "10px 12px";
+    resumeBtn.style.borderRadius = "10px";
+    resumeBtn.style.border = "1px solid #c49a3a";
+    resumeBtn.style.background = "linear-gradient(135deg, #2a1e14, #1a120c)";
+    resumeBtn.style.color = "#f6d48b";
+    resumeBtn.style.fontWeight = "800";
+    resumeBtn.style.cursor = "pointer";
+    resumeBtn.onclick = () => this.togglePauseMenu();
+    menu.appendChild(resumeBtn);
+
+    overlay.appendChild(menu);
+    document.body.appendChild(overlay);
+    this.pauseOverlay = overlay;
+  }
+
+  hidePauseMenu() {
+    if (this.pauseOverlay) this.pauseOverlay.style.display = "none";
+  }
+
+  saveCurrentState() {
+    if (!this.currentCharacter) return;
+    const key = `wowts_save_${this.currentCharacter.id}`;
+    const state = {
+      inventory: this.inventory,
+      gold: this.gold,
+      equipment: this.currentCharacter.equipment,
+      learnedTalents: Array.from(this.learnedTalents),
+      hp: this.player?.hp,
+      mana: this.player?.mana,
+      level: this.player?.level,
+      xp: this.player?.xp,
+      xpToNext: this.player?.xpToNext,
+      position: this.player?.mesh?.position ? { x: this.player.mesh.position.x, y: this.player.mesh.position.y, z: this.player.mesh.position.z } : null,
+      rotationY: this.player?.mesh?.rotation ? this.player.mesh.rotation.y : null,
+      spellSlots: this.spellSlots,
+    };
+    try {
+      localStorage.setItem(key, JSON.stringify(state));
+    } catch (err) {
+      console.warn("Failed to save state", err);
+    }
+  }
+
+  loadSavedState(): any | null {
+    if (!this.currentCharacter) return null;
+    const key = `wowts_save_${this.currentCharacter.id}`;
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) return JSON.parse(raw);
+    } catch (err) {
+      console.warn("Failed to load saved state", err);
+    }
+    return null;
+  }
+
+  async loadWorldMap(loadByExtension: (path: string) => Promise<any>) {
+    const map = await loadByExtension("/environment/maps/Nature.glb");
+    if (map && map.scene) {
+      const mapScene = map.scene.clone(true);
+      mapScene.traverse((child: any) => {
+        if (child.isMesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
+          this.sceneObstacles.push(child);
+        }
+      });
+      this.scene.add(mapScene);
+    }
   }
 }

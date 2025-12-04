@@ -172,7 +172,7 @@ export class Enemy {
     if (camera) this.updateHealthBar(camera);
 
     // Friendly creatures: no AI behavior
-    if (!this.isEnemy) return;
+    if (!this.isEnemy || player.isGameMaster) return;
 
     const dir = new THREE.Vector3().subVectors(player.mesh.position, this.mesh.position);
     const distance = dir.length();

@@ -33,6 +33,11 @@ export class Game {
   lastFpsUpdate: number = 0;
   frames: number = 0;
   fps: number = 0;
+  isDaytime: boolean = true;
+  dayNightTimer: number = 0;
+  dayNightDuration: number = 120000; // 2 minutes full cycle
+  ambientLight!: THREE.AmbientLight;
+  sunLight!: THREE.DirectionalLight;
 
   audio: HTMLAudioElement;
   audioStarted: boolean = false;
@@ -60,6 +65,7 @@ export class Game {
   gameObjectTemplates = gameObjectTemplates;
   paused: boolean = false;
   pauseOverlay: HTMLDivElement | null = null;
+  isGM: boolean = false;
 
   lastCombatTime: number = 0;
   lastLogTime: number = 0;
@@ -110,20 +116,34 @@ export class Game {
     document.body.appendChild(vignette);
 
     // Loader overlay
+    // Loader overlay (with spinner)
+    const loaderStyle = document.createElement("style");
+    loaderStyle.innerHTML = `
+    @keyframes wow-loader-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    @keyframes wow-loader-pulse { 0% { opacity: 0.6; } 50% { opacity: 1; } 100% { opacity: 0.6; } }
+    `;
+    document.head.appendChild(loaderStyle);
     this.loaderDiv = document.createElement("div");
     this.loaderDiv.style.position = "fixed";
     this.loaderDiv.style.top = "0";
     this.loaderDiv.style.left = "0";
     this.loaderDiv.style.width = "100vw";
     this.loaderDiv.style.height = "100vh";
-    this.loaderDiv.style.background = "#222";
-    this.loaderDiv.style.color = "#fff";
-    this.loaderDiv.style.fontSize = "3rem";
+    this.loaderDiv.style.background = "radial-gradient(circle at 30% 30%, rgba(60,45,30,0.8), rgba(12,8,5,0.95))";
+    this.loaderDiv.style.backdropFilter = "blur(4px)";
+    this.loaderDiv.style.color = "#f6d48b";
+    this.loaderDiv.style.fontSize = "2rem";
     this.loaderDiv.style.display = "flex";
     this.loaderDiv.style.alignItems = "center";
     this.loaderDiv.style.justifyContent = "center";
     this.loaderDiv.style.zIndex = "999999";
-    this.loaderDiv.innerText = "Caricamento...";
+    this.loaderDiv.innerHTML = `
+      <div style="display:flex;flex-direction:column;align-items:center;gap:16px;padding:24px 32px;border:2px solid #c49a3a;border-radius:14px;background:linear-gradient(135deg, rgba(34,24,16,0.9), rgba(18,12,8,0.95));box-shadow:0 8px 28px rgba(0,0,0,0.6)">
+        <div style="width:68px;height:68px;border:4px solid rgba(246,212,139,0.35);border-top-color:#f6d48b;border-radius:50%;animation:wow-loader-spin 1s linear infinite;"></div>
+        <div style="font-weight:800;text-shadow:0 0 12px #000;animation:wow-loader-pulse 1.6s ease-in-out infinite;">Loading world...</div>
+        <div style="font-size:0.95rem;color:#d8c7a1;text-align:center;max-width:260px;line-height:1.4;">Preparing terrain, villages, creatures, and your character state.</div>
+      </div>
+    `;
     document.body.appendChild(this.loaderDiv);
 
     // Crea e aggiungi il div per il messaggio stato healthbar
@@ -175,18 +195,25 @@ export class Game {
     // Musica di sottofondo
     this.audio = new Audio("/music/background.mp3");
     this.audio.loop = true;
-    this.audio.volume = 0.2;
+    this.audio.volume = 0.35;
+    this.audio.muted = false;
 
-    // Avvia la musica al primo input utente
-    const startAudio = () => {
-      if (!this.audioStarted) {
-        this.audio.play();
+    // Avvia la musica al primo input utente (con retry in caso di blocco autoplay)
+    const startAudio = async () => {
+      if (this.audioStarted) return;
+      try {
+        this.audio.muted = false;
+        this.audio.currentTime = 0;
+        await this.audio.play();
         this.audioStarted = true;
+      } catch (err) {
+        console.warn("Audio play blocked, retry on next input", err);
+        this.ui?.addChatMessage("System", "Browser blocked audio. Click/tap again to enable sound.");
       }
     };
-    window.addEventListener("keydown", startAudio, { once: true });
-    window.addEventListener("mousedown", startAudio, { once: true });
-    window.addEventListener("touchstart", startAudio, { once: true });
+    ["keydown","mousedown","touchstart","click","pointerdown"].forEach(ev=>{
+      window.addEventListener(ev, startAudio, { once: false });
+    });
 
     // Default loadout for new player
     this.spellSlots[0] = "heroic_strike";
@@ -1065,11 +1092,11 @@ export class Game {
     this.worldInitialized = true;
     if (this.loaderDiv) this.loaderDiv.style.display = "flex";
     // Luce e atmosfera tipo WoW
-    const ambient = new THREE.AmbientLight(0xc7b9a2, 0.55);
-    this.scene.add(ambient);
-    const light = new THREE.DirectionalLight(0xfff0d0, 1.05);
-    light.position.set(18,24,12);
-    this.scene.add(light);
+    this.ambientLight = new THREE.AmbientLight(0xc7b9a2, 0.55);
+    this.scene.add(this.ambientLight);
+    this.sunLight = new THREE.DirectionalLight(0xfff0d0, 1.05);
+    this.sunLight.position.set(18,24,12);
+    this.scene.add(this.sunLight);
 
     // Terreno procedurale (nessun asset remoto)
     const canvas = document.createElement("canvas");
@@ -1467,6 +1494,7 @@ export class Game {
 
     // Aggiorna posizione e animazione dei testi danno
     const now = performance.now();
+    this.updateDayNight(now);
 
     // Logga ANIMATE FRAME e now ogni ciclo
     // console.log("ANIMATE FRAME", now);
@@ -1699,6 +1727,15 @@ export class Game {
     } else {
       this.player.move(this.keys);
     }
+    if (this.player.canFly) {
+      const flySpeed = this.player.speed;
+      if (this.keys.has(" ")) {
+        this.player.mesh.position.y += flySpeed;
+      }
+      if (this.keys.has("x")) {
+        this.player.mesh.position.y = Math.max(1, this.player.mesh.position.y - flySpeed);
+      }
+    }
     this.player.update(delta);
 
     this.enemies.forEach(e=>{
@@ -1805,6 +1842,7 @@ export class Game {
         if (child.isMesh) {
           child.castShadow = true;
           child.receiveShadow = true;
+          this.sceneObstacles.push(child);
         }
       });
       this.scene.add(obj);
@@ -2072,5 +2110,30 @@ export class Game {
       });
       this.scene.add(mapScene);
     }
+  }
+
+  updateDayNight(now: number) {
+    if (!this.ambientLight || !this.sunLight) return;
+    if (!this.dayNightTimer) this.dayNightTimer = now;
+    const t = (now - this.dayNightTimer) % this.dayNightDuration;
+    const phase = t / this.dayNightDuration; // 0..1
+    // phase 0 -> day start, 0.5 -> night, 1 -> day again
+    const isNight = phase > 0.5;
+    const mix = isNight ? (phase - 0.5) * 2 : (1 - phase * 2);
+    // Ambient
+    const ambientIntensity = 0.55 * mix + 0.1;
+    this.ambientLight.intensity = ambientIntensity;
+    this.ambientLight.color.set(isNight ? 0x293248 : 0xc7b9a2);
+    // Sun/Moon
+    this.sunLight.intensity = isNight ? 0.35 : 1.05;
+    this.sunLight.color.set(isNight ? 0x9bb6ff : 0xfff0d0);
+    const angle = phase * Math.PI * 2;
+    this.sunLight.position.set(Math.cos(angle) * 30, Math.sin(angle) * 30, Math.sin(angle) * 10);
+    // Fog/sky
+    const sky = isNight ? 0x121624 : 0x1f2a38;
+    const fogNear = isNight ? 15 : 25;
+    const fogFar = isNight ? 120 : 180;
+    this.scene.background = new THREE.Color(sky);
+    this.scene.fog = new THREE.Fog(sky, fogNear, fogFar);
   }
 }

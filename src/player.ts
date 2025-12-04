@@ -17,6 +17,8 @@ export class Player {
   knownSpells: string[] = ["heroic_strike"];
   mesh: THREE.Mesh;
   speed: number = 0.35;
+  isGameMaster: boolean = false;
+  canFly: boolean = false;
 
   velocityY: number = 0;
   isOnGround: boolean = true;
@@ -160,18 +162,23 @@ export class Player {
       this.mixer.update(delta);
     }
 
-    // Fisica salto
-    const gravity = -0.04;
-    this.mesh.position.y += this.velocityY;
-    if (!this.isOnGround) {
-      this.velocityY += gravity * delta * 60;
-    }
-    if (this.mesh.position.y <= 1) {
-      this.mesh.position.y = 1;
+    // Fisica salto/volo
+    if (this.canFly) {
       this.velocityY = 0;
       this.isOnGround = true;
     } else {
-      this.isOnGround = false;
+      const gravity = -0.04;
+      this.mesh.position.y += this.velocityY;
+      if (!this.isOnGround) {
+        this.velocityY += gravity * delta * 60;
+      }
+      if (this.mesh.position.y <= 1) {
+        this.mesh.position.y = 1;
+        this.velocityY = 0;
+        this.isOnGround = true;
+      } else {
+        this.isOnGround = false;
+      }
     }
 
     if (this.isAttacking) {

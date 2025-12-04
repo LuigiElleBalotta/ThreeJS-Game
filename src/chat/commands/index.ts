@@ -2,6 +2,8 @@ import type { Game } from "../../game";
 import { editScale } from "./editScale";
 import { spawnCreatureCommand } from "./spawnCreature";
 import { spawnGameobjectCommand } from "./spawnGameobject";
+import { gmCommand } from "./gm";
+import { flyCommand } from "./fly";
 
 export type ChatCommandHandler = (args: string[], ctx: { game: Game }) => void;
 
@@ -9,6 +11,8 @@ const commands: Record<string, ChatCommandHandler> = {
   editscale: editScale,
   spawncreature: spawnCreatureCommand,
   spawngameobject: spawnGameobjectCommand,
+  gm: gmCommand,
+  fly: flyCommand,
 };
 
 export function handleChatCommand(raw: string, ctx: { game: Game }): boolean {

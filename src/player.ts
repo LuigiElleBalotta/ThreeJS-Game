@@ -145,10 +145,12 @@ export class Player {
 
     const moveDir = new THREE.Vector3();
     if (keys.has("w")) moveDir.add(forward);
+    const backwards = keys.has("s") && !keys.has("w");
     if (keys.has("s")) moveDir.add(forward.clone().negate());
     const moving = moveDir.lengthSq() > 0;
     if (moving) {
-      moveDir.normalize().multiplyScalar(this.speed);
+      const speedMult = backwards ? 0.5 : 1;
+      moveDir.normalize().multiplyScalar(this.speed * speedMult);
       this.mesh.position.add(moveDir);
     }
 
@@ -156,7 +158,7 @@ export class Player {
     if (keys.has("a")) this.mesh.rotation.y += rotSpeed;
     if (keys.has("d")) this.mesh.rotation.y -= rotSpeed;
 
-    this.setMovementState(moving, keys.has("s"));
+    this.setMovementState(moving, backwards);
   }
 
   takeDamage(amount: number) {

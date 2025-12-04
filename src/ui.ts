@@ -1,4 +1,7 @@
 import { Item } from "./types";
+import { getItemById } from "./items";
+
+import { Item } from "./types";
 
 export class UI {
   playerHealthBar: HTMLDivElement;
@@ -582,7 +585,12 @@ export class UI {
       slot.style.color = "#f6d48b";
       slot.style.fontSize = "0.85rem";
       const item = items[i];
-      slot.textContent = item ? item.name : "";
+      if (item) {
+        slot.textContent = item.name;
+        slot.style.color = this.getItemColor(item);
+      } else {
+        slot.textContent = "";
+      }
       this.attachTooltip(slot, item ? this.formatItemTooltip(item) : "Empty slot");
       slot.dataset.bagIndex = i.toString();
       slot.addEventListener("dragover", e => e.preventDefault());
@@ -687,6 +695,7 @@ export class UI {
       cell.style.fontSize = "0.85rem";
       const itemObj = equipment[slot];
       cell.textContent = itemObj ? itemObj.name : `${slot.toUpperCase()} (empty)`;
+      cell.style.color = itemObj ? this.getItemColor(itemObj) : cell.style.color;
       this.attachTooltip(cell, itemObj ? this.formatItemTooltip(itemObj) : `${slot} slot empty`);
       cell.dataset.equipSlot = slot;
       cell.addEventListener("dragover", e => e.preventDefault());
@@ -716,7 +725,8 @@ export class UI {
 
   formatItemTooltip(item: any) {
     if (!item) return "Unknown item";
-    const lines = [item.name || "Item"];
+    const rarity = this.getItemRarity(item);
+    const lines = [`${item.name || "Item"}${rarity ? ` (${rarity})` : ""}`];
     if (item.description) lines.push(item.description);
     if (item.stats) {
       const stats: string[] = [];
@@ -726,6 +736,26 @@ export class UI {
       if (stats.length) lines.push(stats.join(", "));
     }
     return lines.join("\n");
+  }
+
+  private getItemRarity(item: any): Item["rarity"] {
+    if (!item) return undefined;
+    if (typeof item === "string") return undefined;
+    if (item.id && typeof item.id === "string" && item.id.startsWith("gold_")) return "gold";
+    return item.rarity || "common";
+  }
+
+  private getItemColor(item: any): string {
+    const rarity = this.getItemRarity(item);
+    switch (rarity) {
+      case "gold": return "#d4af37";
+      case "rare": return "#0070dd";
+      case "epic": return "#a335ee";
+      case "legendary": return "#ff8000";
+      case "common":
+      default:
+        return "#9d9d9d";
+    }
   }
 
   attachTooltip(el: HTMLElement, text: string) {
@@ -769,9 +799,11 @@ export class UI {
       if (typeof it === "string") {
         if (it.startsWith("gold_")) {
           const amt = parseInt(it.replace("gold_",""),10) || 0;
-          return { id: it, name: `${amt} Gold`, description: "Currency" };
+          return { id: it, name: `${amt} Gold`, description: "Currency", rarity: "gold" as const };
         }
-        return { id: it, name: it };
+        const itemObj = getItemById(it);
+        if (itemObj) return itemObj;
+        return { id: it, name: it, rarity: "common" as const };
       }
       return it;
     }).filter(Boolean);
@@ -801,7 +833,7 @@ export class UI {
       row.style.justifyContent = "space-between";
       row.style.alignItems = "center";
       row.style.background = "#2a1e14";
-      row.style.color = "#f6d48b";
+      row.style.color = this.getItemColor(item);
       row.style.border = "1px solid #c49a3a";
       row.style.borderRadius = "8px";
       row.style.padding = "6px 8px";

@@ -8,6 +8,7 @@ export const ITEM_REGISTRY: Record<string, Item> = {
         slot: "weapon",
         stats: { strength: 2 },
         classTags: ["warrior", "rogue"],
+        rarity: "common",
     },
     cloth_gloves: {
         id: "cloth_gloves",
@@ -16,6 +17,7 @@ export const ITEM_REGISTRY: Record<string, Item> = {
         slot: "hands",
         stats: { intellect: 1, stamina: 1 },
         classTags: ["mage"],
+        rarity: "common",
     },
     training_shield: {
         id: "training_shield",
@@ -24,6 +26,7 @@ export const ITEM_REGISTRY: Record<string, Item> = {
         slot: "offhand",
         stats: { stamina: 3 },
         classTags: ["warrior"],
+        rarity: "rare",
     },
     rogue_daggers: {
         id: "rogue_daggers",
@@ -32,6 +35,7 @@ export const ITEM_REGISTRY: Record<string, Item> = {
         slot: "weapon",
         stats: { agility: 3 },
         classTags: ["rogue"],
+        rarity: "rare",
     },
     apprentice_staff: {
         id: "apprentice_staff",
@@ -40,11 +44,13 @@ export const ITEM_REGISTRY: Record<string, Item> = {
         slot: "weapon",
         stats: { intellect: 3 },
         classTags: ["mage"],
+        rarity: "rare",
     },
   minor_health_potion: {
     id: "minor_health_potion",
     name: "Minor Health Potion",
     description: "Restores a bit of health.",
+    rarity: "common",
     use: ({ player }) => {
       player.hp = Math.min(player.maxHp, player.hp + 30);
     },

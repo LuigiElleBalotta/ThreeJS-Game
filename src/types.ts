@@ -41,6 +41,7 @@ export interface Item {
   stats?: Partial<{ strength: number; agility: number; intellect: number; stamina: number; crit: number }>;
   use?: (ctx: { player: any; game: any }) => void;
   classTags?: string[];
+  rarity?: "gold" | "common" | "rare" | "epic" | "legendary";
 }
 
 export interface CharacterClass {

@@ -159,7 +159,7 @@ export class Enemy {
     this.healthBarDiv.remove();
   }
 
-  update(player: Player, camera?: THREE.Camera) {
+  update(player: Player, camera?: THREE.Camera, playerIsGhost: boolean = false) {
     if (this.mixer) {
       this.mixer.update(1 / 60);
     }
@@ -172,7 +172,7 @@ export class Enemy {
     if (camera) this.updateHealthBar(camera);
 
     // Friendly creatures: no AI behavior
-    if (!this.isEnemy || player.isGameMaster) return;
+    if (!this.isEnemy || player.isGameMaster || !player.isAlive() || playerIsGhost) return;
 
     const dir = new THREE.Vector3().subVectors(player.mesh.position, this.mesh.position);
     const distance = dir.length();

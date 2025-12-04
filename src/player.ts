@@ -1,9 +1,9 @@
 import * as THREE from "three";
-import { Enemy } from "./enemy";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 import type { GLTF } from "three/examples/jsm/loaders/GLTFLoader";
-import { AnimationMixer, AnimationAction } from "three";
+import { AnimationMixer, AnimationAction, LoopOnce } from "three";
 import { getClassById } from "./classes";
+import { AnimationController, ClipMap } from "./animationController";
 
 export class Player {
   maxHp: number = 100;
@@ -31,10 +31,11 @@ export class Player {
   raycaster: THREE.Raycaster;
   isAttacking: boolean = false;
   attackProgress: number = 0;
+  moveState = { moving: false, backwards: false };
 
   mixer?: AnimationMixer;
   actions: { [name: string]: AnimationAction } = {};
-  activeAction?: AnimationAction;
+  animController?: AnimationController;
 
   constructor(classId: string = "warrior") {
     this.classId = classId;
@@ -50,9 +51,16 @@ export class Player {
     this.mesh = new THREE.Group();
     this.mesh.position.set(0, 1, 0);
 
-    // Carica modello per classe
+    this.loadModel();
+
+    this.raycaster = new THREE.Raycaster();
+
+    window.addEventListener("click", () => this.attack());
+  }
+
+  protected loadModel() {
     const loader = new GLTFLoader();
-    const modelPath = this.classId === "mage" ? "/characters/lizard_mage_animated/scene.gltf" : "/characters/guard_knight/scene.gltf";
+    const modelPath = this.getModelPath();
     loader.load(
       modelPath,
       (gltf: GLTF) => {
@@ -62,37 +70,57 @@ export class Player {
             (child as THREE.Mesh).receiveShadow = true;
           }
         });
-        // Orient models: guard faces backward by default, lizard faces forward
-        gltf.scene.rotation.y = this.classId === "mage" ? 0 : Math.PI;
+        gltf.scene.rotation.y = this.getModelRotationY();
         this.mesh.clear();
-        // Mage model is small: enlarge further
-        const scale = this.classId === "mage" ? 0.06 : 0.01;
+        const scale = this.getModelScale();
         gltf.scene.scale.set(scale, scale, scale);
         gltf.scene.position.y = -1;
         this.mesh.add(gltf.scene);
         this.mesh.scale.set(1, 1, 1);
         this.mesh.position.y = 1;
 
-        // Animazioni
         if (gltf.animations && gltf.animations.length > 0) {
           this.mixer = new AnimationMixer(gltf.scene);
           for (const clip of gltf.animations) {
-            this.actions[clip.name] = this.mixer.clipAction(clip);
+            const action = this.mixer.clipAction(clip);
+            action.enabled = true;
+            action.clampWhenFinished = false;
+            if (clip.name.toLowerCase().includes("jump")) {
+              action.loop = LoopOnce;
+            }
+            this.actions[clip.name] = action;
           }
-          // Gioca l'idle se presente, preferendo "Static Pose"
-          const idleAnim = Object.entries(this.actions).find(([name]) => name.toLowerCase().includes("static pose") || name.toLowerCase().includes("idle"));
-          const chosen = idleAnim ? idleAnim[1] : Object.values(this.actions)[0];
-          if (chosen) {
-            chosen.play();
-            this.activeAction = chosen;
-          }
+          this.animController = new AnimationController(this.actions, this.getClipMap());
+          this.animController.setState({ moving: false, backwards: false, airborne: false, attacking: false });
         }
       }
     );
+  }
 
-    this.raycaster = new THREE.Raycaster();
+  protected getModelPath() {
+    return this.classId === "mage" ? "/characters/lizard_mage_animated/scene.gltf" : "/characters/guard_knight/scene.gltf";
+  }
 
-    window.addEventListener("click", () => this.attack());
+  protected getModelScale() {
+    return this.classId === "mage" ? 0.06 : 0.01;
+  }
+
+  protected getModelRotationY() {
+    return this.classId === "mage" ? 0 : Math.PI;
+  }
+
+  protected getClipMap(): ClipMap {
+    const names = Object.keys(this.actions || {});
+    const find = (subs: string[]) =>
+      names.find(n => subs.some(s => n.toLowerCase().includes(s.toLowerCase())));
+    const attack = names.filter(n => /(attack|slash|impact|hit|kick)/i.test(n));
+    return {
+      idle: find(["idle"]),
+      run: find(["run"]),
+      runBack: find(["run(back)"]),
+      jump: find(["jump"]),
+      attack: attack.length ? attack : undefined,
+    };
   }
 
   getBoundingBox(pos?: THREE.Vector3) {
@@ -118,7 +146,8 @@ export class Player {
     const moveDir = new THREE.Vector3();
     if (keys.has("w")) moveDir.add(forward);
     if (keys.has("s")) moveDir.add(forward.clone().negate());
-    if (moveDir.lengthSq() > 0) {
+    const moving = moveDir.lengthSq() > 0;
+    if (moving) {
       moveDir.normalize().multiplyScalar(this.speed);
       this.mesh.position.add(moveDir);
     }
@@ -126,6 +155,8 @@ export class Player {
     const rotSpeed = 0.06;
     if (keys.has("a")) this.mesh.rotation.y += rotSpeed;
     if (keys.has("d")) this.mesh.rotation.y -= rotSpeed;
+
+    this.setMovementState(moving, keys.has("s"));
   }
 
   takeDamage(amount: number) {
@@ -144,6 +175,8 @@ export class Player {
     this.lastAttack = now;
     this.isAttacking = true;
     this.attackProgress = 0;
+    if (this.animController) this.animController.playAttack();
+    this.updateAnimationState();
 
     const event = new CustomEvent("playerAttack", { detail: this });
     window.dispatchEvent(event);
@@ -182,23 +215,41 @@ export class Player {
     }
 
     if (this.isAttacking) {
-      // Swing animation: oscillazione mesh lungo l’asse Y
-      this.attackProgress += delta * 5; // velocità animazione
-      const angle = Math.sin(this.attackProgress) * 0.5;
-      this.mesh.rotation.y = angle;
-
+      this.attackProgress += delta * 5;
       if (this.attackProgress > Math.PI) {
-        this.mesh.rotation.y = 0;
         this.isAttacking = false;
+        this.attackProgress = 0;
       }
     }
+    this.updateAnimationState();
   }
 
   jump() {
     if (this.isOnGround) {
       this.velocityY = 0.32;
       this.isOnGround = false;
+      this.updateAnimationState();
     }
+  }
+
+  setMovementState(moving: boolean, backwards: boolean) {
+    this.moveState.moving = moving;
+    this.moveState.backwards = backwards;
+    this.updateAnimationState();
+  }
+
+  protected updateAnimationState() {
+    if (!this.animController) return;
+    if (this.isAttacking) {
+      // Attack clip already triggered separately; avoid cycling through attacks mid-swing
+      return;
+    }
+    this.animController.setState({
+      moving: this.moveState.moving,
+      backwards: this.moveState.backwards,
+      airborne: !this.isOnGround,
+      attacking: this.isAttacking,
+    });
   }
 
   gainXp(amount: number) {
@@ -216,3 +267,8 @@ export class Player {
     }
   }
 }
+
+
+
+
+

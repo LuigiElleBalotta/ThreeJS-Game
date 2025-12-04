@@ -10,6 +10,7 @@ import { getTalentsForClass } from "./talents";
 import { creatureTemplates, creatureSpawns, CreatureTemplate, creatureTemplateLoot } from "./creatures";
 import { handleChatCommand } from "./chat/commands";
 import { gameObjectTemplates, gameObjectSpawns, buildGeometryGroup } from "./gameobjects";
+import { WarriorPlayer } from "./players/warrior";
 
 export class Game {
   scene: THREE.Scene;
@@ -1195,7 +1196,11 @@ export class Game {
     }
 
     const classId = this.currentCharacter?.classId ?? "warrior";
-    this.player = new Player(classId);
+    if (classId === "warrior") {
+      this.player = new WarriorPlayer();
+    } else {
+      this.player = new Player(classId);
+    }
     this.player.mesh.position.set(5, 1, -15); // x=5, y=1, z=-15
 
     if (savedState) {
@@ -1719,11 +1724,13 @@ export class Game {
       let cameraDirCopy = cameraDir.clone().normalize().multiplyScalar(this.player.speed);
       tryMovePlayer(cameraDirCopy);
       this.player.mesh.rotation.y = Math.atan2(cameraDirCopy.x, cameraDirCopy.z);
+      this.player.setMovementState(true, false);
     } else if (moving && moveDir.lengthSq() > 0) {
       moveDir.normalize().multiplyScalar(this.player.speed);
       tryMovePlayer(moveDir);
       // Ruota il player verso la direzione di movimento
       this.player.mesh.rotation.y = Math.atan2(moveDir.x, moveDir.z);
+      this.player.setMovementState(true, this.keys.has("s"));
     } else {
       this.player.move(this.keys);
     }

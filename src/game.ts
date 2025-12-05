@@ -11,6 +11,8 @@ import { creatureTemplates, creatureSpawns, CreatureTemplate, creatureTemplateLo
 import { handleChatCommand } from "./chat/commands";
 import { gameObjectTemplates, gameObjectSpawns, buildGeometryGroup } from "./gameobjects";
 import { WarriorPlayer } from "./players/warrior";
+import { RoguePlayer } from "./players/rogue";
+import { MagePlayer } from "./players/mage";
 
 export class Game {
   scene: THREE.Scene;
@@ -51,6 +53,10 @@ export class Game {
   lastGlobalCast: number = 0;
   spellSlots: (string | null)[] = Array(12).fill(null);
   projectiles: { mesh: THREE.Mesh, target: Enemy, damage: number, isCrit: boolean, speed: number }[] = [];
+  casting: { spell: any; slot: number; target: Enemy | null; start: number; end: number } | null = null;
+  castBarWrap: HTMLDivElement | null = null;
+  castBarFill: HTMLDivElement | null = null;
+  castBarText: HTMLDivElement | null = null;
   isGhost: boolean = false;
   corpsePosition: THREE.Vector3 | null = null;
   corpseMarker: THREE.Mesh | null = null;
@@ -923,6 +929,10 @@ export class Game {
   }
 
   castSpell(slot: number) {
+    if (this.casting) {
+      this.showSpellMsg("Already casting");
+      return;
+    }
     const spellId = this.spellSlots[slot] ?? null;
     if (!spellId) return;
     const config = SPELL_REGISTRY[spellId];
@@ -984,34 +994,7 @@ export class Game {
       animate();
     }
 
-    function showSpellMsg(msg: string) {
-      let el = document.getElementById("spellbar-msg");
-      if (!el) {
-        el = document.createElement("div");
-        el.id = "spellbar-msg";
-        el.style.position = "fixed";
-        el.style.left = "50%";
-        el.style.bottom = "90px";
-        el.style.transform = "translateX(-50%)";
-        el.style.background = "rgba(14,10,6,0.9)";
-        el.style.color = "#f6d48b";
-        el.style.fontWeight = "bold";
-        el.style.fontSize = "1.2rem";
-        el.style.padding = "8px 24px";
-        el.style.borderRadius = "10px";
-        el.style.zIndex = "10001";
-        el.style.border = "1px solid #c49a3a";
-        el.style.boxShadow = "0 2px 12px #000";
-        document.body.appendChild(el);
-      }
-      el.innerText = msg;
-      el.style.opacity = "1";
-      el.style.display = "block";
-      setTimeout(() => {
-        el.style.opacity = "0";
-        setTimeout(() => { el.style.display = "none"; }, 400);
-      }, 1000);
-    }
+    const showSpellMsg = (msg: string) => this.showSpellMsg(msg);
 
     if (config.cost > this.player.mana) {
       showSpellMsg("Not enough mana");
@@ -1037,61 +1020,73 @@ export class Game {
       return;
     }
 
-    // Spellbar overlay
-    if (slots && slots[slot]) showCooldownOverlay(slots[slot], config.cooldown);
-    this.spellLastCast[slot] = now;
-    this.lastGlobalCast = now;
-    this.player.mana -= config.cost;
-    this.lastCombatTime = performance.now();
+    // Cast handling
+    const beginCast = () => {
+      if (slots && slots[slot]) showCooldownOverlay(slots[slot], config.cooldown);
+      this.spellLastCast[slot] = now;
+      this.lastGlobalCast = now;
+      this.player.mana -= config.cost;
+      this.lastCombatTime = performance.now();
+    };
 
-    // Execute spell logic
-    const dmg = config.execute({ player: this.player, game: this, target });
-
-    // Visual feedback (shared)
-    if (dmg > 0) {
-      const div = document.createElement("div");
-      div.innerText = `-${dmg}`;
-      div.style.position = "fixed";
-      div.style.color = "#fff";
-      div.style.fontWeight = "bold";
-      div.style.fontSize = "28px";
-      div.style.pointerEvents = "none";
-      div.style.textShadow = "0 0 12px #000, 0 0 2px #fff";
-      div.style.zIndex = "99999";
-      div.style.padding = "2px 14px";
-      div.style.borderRadius = "10px";
-      div.style.background = "rgba(0,0,0,0.15)";
-      document.body.appendChild(div);
-      const angle = Math.random() * Math.PI * 2;
-      const updateDmg = () => {
-        if (!target.mesh.parent) { div.remove(); return; }
-        const pos = target.mesh.position.clone();
-        pos.y += 2.2;
-        const vector = pos.project(this.camera);
-        const t = (performance.now() - now) / 1000;
-        const radius = 60;
-        const theta = angle + t * Math.PI;
-        const x = (vector.x * 0.5 + 0.5) * window.innerWidth + Math.cos(theta) * radius;
-        const y = (-vector.y * 0.5 + 0.5) * window.innerHeight + Math.sin(theta) * radius;
-        div.style.left = `${x}px`;
-        div.style.top = `${y}px`;
-        div.style.opacity = `${1 - t}`;
-        if (t < 1) requestAnimationFrame(updateDmg);
-        else div.remove();
-      };
-      updateDmg();
+    if (config.castTime && config.castTime > 0) {
+      beginCast();
+      this.startCastBar(config.name, config.castTime);
+      this.casting = { spell: config, slot, target, start: now, end: now + config.castTime };
+      return;
     }
 
-    // Spawn projectile for ranged
+    beginCast();
+    this.resolveSpellDamage(config, target, now);
+  }
+
+  resolveSpellDamage(config: any, target: Enemy | null, startTime: number) {
+    if (!target || !target.isAlive()) return;
+    const dmg = config.execute({ player: this.player, game: this, target });
+    if (dmg > 0) this.showFloatingDamage(target, dmg, startTime);
     if (config.kind === "ranged") {
       const boltGeo = new THREE.SphereGeometry(0.12, 8, 8);
-      const boltMat = new THREE.MeshBasicMaterial({ color: 0x6ec3ff });
+      const boltMat = new THREE.MeshBasicMaterial({ color: config.projectileColor ?? 0x6ec3ff });
       const bolt = new THREE.Mesh(boltGeo, boltMat);
       bolt.position.copy(this.player.mesh.position);
       bolt.position.y += 1.4;
       this.scene.add(bolt);
       this.projectiles.push({ mesh: bolt, target, damage: 0, isCrit: false, speed: 0.3 });
     }
+  }
+
+  showFloatingDamage(target: Enemy, dmg: number, startTime: number) {
+    const div = document.createElement("div");
+    div.innerText = `-${dmg}`;
+    div.style.position = "fixed";
+    div.style.color = "#fff";
+    div.style.fontWeight = "bold";
+    div.style.fontSize = "28px";
+    div.style.pointerEvents = "none";
+    div.style.textShadow = "0 0 12px #000, 0 0 2px #fff";
+    div.style.zIndex = "99999";
+    div.style.padding = "2px 14px";
+    div.style.borderRadius = "10px";
+    div.style.background = "rgba(0,0,0,0.15)";
+    document.body.appendChild(div);
+    const angle = Math.random() * Math.PI * 2;
+    const updateDmg = () => {
+      if (!target.mesh.parent) { div.remove(); return; }
+      const pos = target.mesh.position.clone();
+      pos.y += 2.2;
+      const vector = pos.project(this.camera);
+      const t = (performance.now() - startTime) / 1000;
+      const radius = 60;
+      const theta = angle + t * Math.PI;
+      const x = (vector.x * 0.5 + 0.5) * window.innerWidth + Math.cos(theta) * radius;
+      const y = (-vector.y * 0.5 + 0.5) * window.innerHeight + Math.sin(theta) * radius;
+      div.style.left = `${x}px`;
+      div.style.top = `${y}px`;
+      div.style.opacity = `${1 - t}`;
+      if (t < 1) requestAnimationFrame(updateDmg);
+      else div.remove();
+    };
+    updateDmg();
   }
 
   async initWorld() {
@@ -1204,6 +1199,10 @@ export class Game {
     const classId = this.currentCharacter?.classId ?? "warrior";
     if (classId === "warrior") {
       this.player = new WarriorPlayer();
+    } else if (classId === "rogue") {
+      this.player = new RoguePlayer();
+    } else if (classId === "mage") {
+      this.player = new MagePlayer();
     } else {
       this.player = new Player(classId);
     }
@@ -1810,6 +1809,7 @@ export class Game {
     this.camera.lookAt(this.player.mesh.position);
 
     this.updateGhostUI();
+    this.updateCasting(performance.now());
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -1910,6 +1910,104 @@ export class Game {
     const filter = on ? "grayscale(1)" : "";
     if (this.renderer?.domElement) this.renderer.domElement.style.filter = filter;
     document.body.style.filter = filter;
+  }
+
+  ensureCastBar() {
+    if (this.castBarWrap) return;
+    const wrap = document.createElement("div");
+    wrap.id = "castbar";
+    wrap.style.position = "fixed";
+    wrap.style.bottom = "100px";
+    wrap.style.left = "50%";
+    wrap.style.transform = "translateX(-50%)";
+    wrap.style.width = "240px";
+    wrap.style.height = "18px";
+    wrap.style.background = "rgba(20,16,12,0.9)";
+    wrap.style.border = "1px solid #c49a3a";
+    wrap.style.borderRadius = "10px";
+    wrap.style.boxShadow = "0 4px 12px rgba(0,0,0,0.6)";
+    wrap.style.display = "none";
+    wrap.style.zIndex = "10004";
+
+    const fill = document.createElement("div");
+    fill.style.height = "100%";
+    fill.style.width = "0%";
+    fill.style.background = "linear-gradient(90deg,#e35d2e,#ff9a63)";
+    fill.style.borderRadius = "8px";
+    fill.style.transition = "width 0s";
+
+    const text = document.createElement("div");
+    text.style.position = "absolute";
+    text.style.left = "8px";
+    text.style.top = "50%";
+    text.style.transform = "translateY(-50%)";
+    text.style.color = "#f7d09b";
+    text.style.fontWeight = "700";
+    text.style.fontSize = "0.9rem";
+
+    wrap.appendChild(fill);
+    wrap.appendChild(text);
+    document.body.appendChild(wrap);
+    this.castBarWrap = wrap;
+    this.castBarFill = fill;
+    this.castBarText = text;
+  }
+
+  startCastBar(label: string, durationMs: number) {
+    this.ensureCastBar();
+    if (!this.castBarWrap || !this.castBarFill || !this.castBarText) return;
+    this.castBarWrap.style.display = "block";
+    this.castBarFill.style.width = "0%";
+    this.castBarText.textContent = `${label}`;
+    this.castBarWrap.dataset["castDuration"] = durationMs.toString();
+  }
+
+  updateCasting(now: number) {
+    if (!this.casting) return;
+    const { start, end, spell, target } = this.casting;
+    const elapsed = now - start;
+    const total = end - start;
+    const pct = Math.min(1, elapsed / total);
+    if (this.castBarFill) this.castBarFill.style.width = `${pct * 100}%`;
+    if (this.castBarText) {
+      const remaining = Math.max(0, (total - elapsed) / 1000).toFixed(1);
+      this.castBarText.textContent = `${spell.name} (${remaining}s)`;
+    }
+    if (elapsed >= total) {
+      // finish cast
+      if (this.castBarWrap) this.castBarWrap.style.display = "none";
+      this.casting = null;
+      this.resolveSpellDamage(spell, target, now);
+    }
+  }
+
+  showSpellMsg(msg: string) {
+    let el = document.getElementById("spellbar-msg");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "spellbar-msg";
+      el.style.position = "fixed";
+      el.style.left = "50%";
+      el.style.bottom = "90px";
+      el.style.transform = "translateX(-50%)";
+      el.style.background = "rgba(14,10,6,0.9)";
+      el.style.color = "#f6d48b";
+      el.style.fontWeight = "bold";
+      el.style.fontSize = "1.2rem";
+      el.style.padding = "8px 24px";
+      el.style.borderRadius = "10px";
+      el.style.zIndex = "10001";
+      el.style.border = "1px solid #c49a3a";
+      el.style.boxShadow = "0 2px 12px #000";
+      document.body.appendChild(el);
+    }
+    el.innerText = msg;
+    el.style.opacity = "1";
+    el.style.display = "block";
+    setTimeout(() => {
+      el.style.opacity = "0";
+      setTimeout(() => { el.style.display = "none"; }, 400);
+    }, 1000);
   }
 
   updateGhostUI() {
@@ -2261,19 +2359,19 @@ export class Game {
     // phase 0 -> day start, 0.5 -> night, 1 -> day again
     const isNight = phase > 0.5;
     const mix = isNight ? (phase - 0.5) * 2 : (1 - phase * 2);
-    // Ambient
-    const ambientIntensity = 0.55 * mix + 0.1;
+    // Ambient: keep nights brighter by raising the minimum and ceiling slightly
+    const ambientIntensity = 0.45 * mix + 0.25;
     this.ambientLight.intensity = ambientIntensity;
-    this.ambientLight.color.set(isNight ? 0x293248 : 0xc7b9a2);
+    this.ambientLight.color.set(isNight ? 0x323b55 : 0xc7b9a2);
     // Sun/Moon
-    this.sunLight.intensity = isNight ? 0.35 : 1.05;
-    this.sunLight.color.set(isNight ? 0x9bb6ff : 0xfff0d0);
+    this.sunLight.intensity = isNight ? 0.55 : 1.05;
+    this.sunLight.color.set(isNight ? 0xb7c8ff : 0xfff0d0);
     const angle = phase * Math.PI * 2;
     this.sunLight.position.set(Math.cos(angle) * 30, Math.sin(angle) * 30, Math.sin(angle) * 10);
     // Fog/sky
-    const sky = isNight ? 0x121624 : 0x1f2a38;
-    const fogNear = isNight ? 15 : 25;
-    const fogFar = isNight ? 120 : 180;
+    const sky = isNight ? 0x1a2233 : 0x1f2a38;
+    const fogNear = isNight ? 22 : 25;
+    const fogFar = isNight ? 170 : 180;
     this.scene.background = new THREE.Color(sky);
     this.scene.fog = new THREE.Fog(sky, fogNear, fogFar);
   }

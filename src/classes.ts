@@ -11,7 +11,7 @@ export const CHARACTER_CLASSES: CharacterClass[] = [
     id: "mage",
     name: "Mage",
     baseStats: { hp: 90, mana: 160, attackDamage: 15 },
-    starterSpells: ["arcane_bolt", "fire_blast"],
+    starterSpells: ["arcane_bolt", "fire_blast", "firebolt"],
   },
   {
     id: "rogue",

@@ -98,15 +98,15 @@ export class Player {
   }
 
   protected getModelPath() {
-    return this.classId === "mage" ? "/characters/lizard_mage_animated/scene.gltf" : "/characters/guard_knight/scene.gltf";
+    return "/characters/guard_knight/scene.gltf";
   }
 
   protected getModelScale() {
-    return this.classId === "mage" ? 0.06 : 0.01;
+    return 0.01;
   }
 
   protected getModelRotationY() {
-    return this.classId === "mage" ? 0 : Math.PI;
+    return Math.PI;
   }
 
   protected getClipMap(): ClipMap {

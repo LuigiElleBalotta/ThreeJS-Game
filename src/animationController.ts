@@ -40,7 +40,13 @@ export class AnimationController {
       }
       return;
     }
-    if (this.clipMap.idle) this.play(this.clipMap.idle);
+    if (this.clipMap.idle) {
+      this.play(this.clipMap.idle);
+    } else if (this.current) {
+      // No idle clip: stop current animation to avoid sliding
+      this.current.fadeOut(0.1);
+      this.current = undefined;
+    }
   }
 
   playAttack() {

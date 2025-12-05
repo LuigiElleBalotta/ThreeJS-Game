@@ -5,8 +5,9 @@ import { sinisterStrike } from "./sinisterStrike";
 import { shieldBlock } from "./shieldBlock";
 import { fireBlast } from "./fireBlast";
 import { backstab } from "./backstab";
+import { firebolt } from "./firebolt";
 
-const SPELL_LIST: Spell[] = [heroicStrike, arcaneBolt, sinisterStrike, shieldBlock, fireBlast, backstab];
+const SPELL_LIST: Spell[] = [heroicStrike, arcaneBolt, sinisterStrike, shieldBlock, fireBlast, backstab, firebolt];
 
 export const SPELL_REGISTRY: Record<string, Spell> = SPELL_LIST.reduce((acc, spell) => {
   acc[spell.id] = spell;

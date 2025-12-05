@@ -18,6 +18,8 @@ export interface Spell {
   cost: number;
   cooldown: number;
   range: number;
+  castTime?: number; // milliseconds; if present, spell is casted instead of instant
+  projectileColor?: number; // hex color for projectile
   damageMult: number;
   critChance: number;
   execute: (ctx: SpellContext) => number; // returns damage dealt (or 0 if none)

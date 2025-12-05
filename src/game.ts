@@ -13,6 +13,7 @@ import { gameObjectTemplates, gameObjectSpawns, buildGeometryGroup } from "./gam
 import { WarriorPlayer } from "./players/warrior";
 import { RoguePlayer } from "./players/rogue";
 import { MagePlayer } from "./players/mage";
+import { SpellFX } from "./spellFx";
 
 export class Game {
   scene: THREE.Scene;
@@ -54,11 +55,10 @@ export class Game {
   spellSlots: (string | null)[] = Array(12).fill(null);
   projectiles: { mesh: THREE.Mesh, target: Enemy, damage: number, isCrit: boolean, speed: number }[] = [];
   casting: { spell: any; slot: number; target: Enemy | null; start: number; end: number } | null = null;
-  castBarWrap: HTMLDivElement | null = null;
-  castBarFill: HTMLDivElement | null = null;
-  castBarText: HTMLDivElement | null = null;
+  fx: SpellFX = new SpellFX();
   isGhost: boolean = false;
   corpsePosition: THREE.Vector3 | null = null;
+  lastSpawnPosition: THREE.Vector3 = new THREE.Vector3(5, 1, -15);
   corpseMarker: THREE.Mesh | null = null;
   corpseArrow: HTMLDivElement | null = null;
   revivePopup: HTMLDivElement | null = null;
@@ -78,6 +78,7 @@ export class Game {
   gameObjectTemplates = gameObjectTemplates;
   paused: boolean = false;
   pauseOverlay: HTMLDivElement | null = null;
+  playerWasMoving: boolean = false;
   isGM: boolean = false;
 
   lastCombatTime: number = 0;
@@ -994,7 +995,7 @@ export class Game {
       animate();
     }
 
-    const showSpellMsg = (msg: string) => this.showSpellMsg(msg);
+    const showSpellMsg = (msg: string) => this.fx.showSpellMsg(msg);
 
     if (config.cost > this.player.mana) {
       showSpellMsg("Not enough mana");
@@ -1020,6 +1021,7 @@ export class Game {
       return;
     }
 
+    const inCombatBefore = (now - this.lastCombatTime < 5000);
     // Cast handling
     const beginCast = () => {
       if (slots && slots[slot]) showCooldownOverlay(slots[slot], config.cooldown);
@@ -1027,11 +1029,12 @@ export class Game {
       this.lastGlobalCast = now;
       this.player.mana -= config.cost;
       this.lastCombatTime = performance.now();
+      this.player.onSpellCast(config, { inCombat: inCombatBefore });
     };
 
     if (config.castTime && config.castTime > 0) {
       beginCast();
-      this.startCastBar(config.name, config.castTime);
+      this.fx.startCastBar(config.name, config.castTime);
       this.casting = { spell: config, slot, target, start: now, end: now + config.castTime };
       return;
     }
@@ -1043,50 +1046,21 @@ export class Game {
   resolveSpellDamage(config: any, target: Enemy | null, startTime: number) {
     if (!target || !target.isAlive()) return;
     const dmg = config.execute({ player: this.player, game: this, target });
-    if (dmg > 0) this.showFloatingDamage(target, dmg, startTime);
+    if (dmg > 0) {
+      this.showFloatingDamage(target, dmg, startTime);
+      this.player.onDealDamage(dmg, target, config);
+    }
     if (config.kind === "ranged") {
-      const boltGeo = new THREE.SphereGeometry(0.12, 8, 8);
-      const boltMat = new THREE.MeshBasicMaterial({ color: config.projectileColor ?? 0x6ec3ff });
-      const bolt = new THREE.Mesh(boltGeo, boltMat);
-      bolt.position.copy(this.player.mesh.position);
-      bolt.position.y += 1.4;
-      this.scene.add(bolt);
+      const origin = this.player.mesh.position.clone();
+      origin.y += 1.4;
+      const bolt = this.fx.spawnProjectile(config.projectileColor, origin, target, this.scene);
       this.projectiles.push({ mesh: bolt, target, damage: 0, isCrit: false, speed: 0.3 });
     }
+    this.player.onSpellImpact(config, { target, damage: dmg });
   }
 
   showFloatingDamage(target: Enemy, dmg: number, startTime: number) {
-    const div = document.createElement("div");
-    div.innerText = `-${dmg}`;
-    div.style.position = "fixed";
-    div.style.color = "#fff";
-    div.style.fontWeight = "bold";
-    div.style.fontSize = "28px";
-    div.style.pointerEvents = "none";
-    div.style.textShadow = "0 0 12px #000, 0 0 2px #fff";
-    div.style.zIndex = "99999";
-    div.style.padding = "2px 14px";
-    div.style.borderRadius = "10px";
-    div.style.background = "rgba(0,0,0,0.15)";
-    document.body.appendChild(div);
-    const angle = Math.random() * Math.PI * 2;
-    const updateDmg = () => {
-      if (!target.mesh.parent) { div.remove(); return; }
-      const pos = target.mesh.position.clone();
-      pos.y += 2.2;
-      const vector = pos.project(this.camera);
-      const t = (performance.now() - startTime) / 1000;
-      const radius = 60;
-      const theta = angle + t * Math.PI;
-      const x = (vector.x * 0.5 + 0.5) * window.innerWidth + Math.cos(theta) * radius;
-      const y = (-vector.y * 0.5 + 0.5) * window.innerHeight + Math.sin(theta) * radius;
-      div.style.left = `${x}px`;
-      div.style.top = `${y}px`;
-      div.style.opacity = `${1 - t}`;
-      if (t < 1) requestAnimationFrame(updateDmg);
-      else div.remove();
-    };
-    updateDmg();
+    this.fx.showFloatingDamage(target, dmg, startTime, this.camera);
   }
 
   async initWorld() {
@@ -1206,10 +1180,13 @@ export class Game {
     } else {
       this.player = new Player(classId);
     }
-    this.player.mesh.position.set(5, 1, -15); // x=5, y=1, z=-15
+    this.player.mesh.position.copy(this.lastSpawnPosition); // default spawn
 
     if (savedState) {
-      if (savedState.position) this.player.mesh.position.set(savedState.position.x, savedState.position.y, savedState.position.z);
+      if (savedState.position) {
+        this.player.mesh.position.set(savedState.position.x, savedState.position.y, savedState.position.z);
+        this.lastSpawnPosition.copy(this.player.mesh.position);
+      }
       if (typeof savedState.rotationY === "number") this.player.mesh.rotation.y = savedState.rotationY;
       if (typeof savedState.hp === "number") this.player.hp = savedState.hp;
       if (typeof savedState.mana === "number") this.player.mana = savedState.mana;
@@ -1449,7 +1426,10 @@ export class Game {
     const intersects = ray.intersectObjects(enemyMeshes);
     if(intersects.length>0){
       const hitEnemy = this.enemies.find(e=>e.mesh===intersects[0].object);
-      if(hitEnemy) hitEnemy.takeDamage(this.player.attackDamage);
+      if(hitEnemy) {
+        hitEnemy.takeDamage(this.player.attackDamage);
+        this.player.onDealDamage(this.player.attackDamage, hitEnemy, null as any);
+      }
     }
   }
 
@@ -1557,6 +1537,11 @@ export class Game {
     const maxHp = this.player.maxHp ?? 100;
     const maxMana = this.player.maxMana ?? 100;
     const isOutOfCombat = (now - this.lastCombatTime > 5000);
+    if (isOutOfCombat && this.player.isInCombat) {
+      this.player.onLeaveCombat();
+    } else if (!isOutOfCombat && !this.player.isInCombat) {
+      this.player.onEnterCombat();
+    }
 
     // Logga isOutOfCombat ogni 2 secondi
     if (!this.lastLogTime) this.lastLogTime = now;
@@ -1743,6 +1728,16 @@ export class Game {
     } else {
       this.player.move(this.keys);
     }
+    // Movement hooks
+    const isCurrentlyMoving = moving || (this.mouseLeftDown && this.rightMouseDown);
+    if (isCurrentlyMoving && !this.playerWasMoving) {
+      const dir = moveDir.lengthSq() > 0 ? moveDir.clone().normalize() : new THREE.Vector3(0,0,0);
+      this.player.onMoveStart(dir);
+    }
+    if (!isCurrentlyMoving && this.playerWasMoving) {
+      this.player.onMoveStop();
+    }
+    this.playerWasMoving = isCurrentlyMoving;
     if (this.player.canFly) {
       const flySpeed = this.player.speed;
       if (this.keys.has(" ")) {
@@ -1819,6 +1814,10 @@ export class Game {
     this.player.hp = 0;
     this.corpsePosition = this.player.mesh.position.clone();
     this.createCorpseMarker();
+    // Teleport ghost to last saved spawn immediately
+    if (this.lastSpawnPosition) {
+      this.player.mesh.position.copy(this.lastSpawnPosition);
+    }
     this.applyGhostVisuals(true);
     this.ensureGhostUI();
     this.ui.addChatMessage("System", "You died. Return to your corpse to revive.");
@@ -1828,6 +1827,7 @@ export class Game {
     if (!this.isGhost || !this.corpsePosition) return;
     this.isGhost = false;
     this.player.hp = this.player.maxHp;
+    // Resurrect at corpse if desired; otherwise at spawn. Here we keep corpse position as requested revive point.
     this.player.mesh.position.copy(this.corpsePosition);
     this.player.isOnGround = true;
     if (this.corpseMarker) {
@@ -1912,103 +1912,17 @@ export class Game {
     document.body.style.filter = filter;
   }
 
-  ensureCastBar() {
-    if (this.castBarWrap) return;
-    const wrap = document.createElement("div");
-    wrap.id = "castbar";
-    wrap.style.position = "fixed";
-    wrap.style.bottom = "100px";
-    wrap.style.left = "50%";
-    wrap.style.transform = "translateX(-50%)";
-    wrap.style.width = "240px";
-    wrap.style.height = "18px";
-    wrap.style.background = "rgba(20,16,12,0.9)";
-    wrap.style.border = "1px solid #c49a3a";
-    wrap.style.borderRadius = "10px";
-    wrap.style.boxShadow = "0 4px 12px rgba(0,0,0,0.6)";
-    wrap.style.display = "none";
-    wrap.style.zIndex = "10004";
-
-    const fill = document.createElement("div");
-    fill.style.height = "100%";
-    fill.style.width = "0%";
-    fill.style.background = "linear-gradient(90deg,#e35d2e,#ff9a63)";
-    fill.style.borderRadius = "8px";
-    fill.style.transition = "width 0s";
-
-    const text = document.createElement("div");
-    text.style.position = "absolute";
-    text.style.left = "8px";
-    text.style.top = "50%";
-    text.style.transform = "translateY(-50%)";
-    text.style.color = "#f7d09b";
-    text.style.fontWeight = "700";
-    text.style.fontSize = "0.9rem";
-
-    wrap.appendChild(fill);
-    wrap.appendChild(text);
-    document.body.appendChild(wrap);
-    this.castBarWrap = wrap;
-    this.castBarFill = fill;
-    this.castBarText = text;
-  }
-
-  startCastBar(label: string, durationMs: number) {
-    this.ensureCastBar();
-    if (!this.castBarWrap || !this.castBarFill || !this.castBarText) return;
-    this.castBarWrap.style.display = "block";
-    this.castBarFill.style.width = "0%";
-    this.castBarText.textContent = `${label}`;
-    this.castBarWrap.dataset["castDuration"] = durationMs.toString();
-  }
-
   updateCasting(now: number) {
     if (!this.casting) return;
     const { start, end, spell, target } = this.casting;
-    const elapsed = now - start;
-    const total = end - start;
-    const pct = Math.min(1, elapsed / total);
-    if (this.castBarFill) this.castBarFill.style.width = `${pct * 100}%`;
-    if (this.castBarText) {
-      const remaining = Math.max(0, (total - elapsed) / 1000).toFixed(1);
-      this.castBarText.textContent = `${spell.name} (${remaining}s)`;
-    }
-    if (elapsed >= total) {
-      // finish cast
-      if (this.castBarWrap) this.castBarWrap.style.display = "none";
+    this.fx.updateCastBar(now, start, end, spell.name);
+    if (now >= end) {
+      this.fx.hideCastBar();
       this.casting = null;
       this.resolveSpellDamage(spell, target, now);
     }
   }
 
-  showSpellMsg(msg: string) {
-    let el = document.getElementById("spellbar-msg");
-    if (!el) {
-      el = document.createElement("div");
-      el.id = "spellbar-msg";
-      el.style.position = "fixed";
-      el.style.left = "50%";
-      el.style.bottom = "90px";
-      el.style.transform = "translateX(-50%)";
-      el.style.background = "rgba(14,10,6,0.9)";
-      el.style.color = "#f6d48b";
-      el.style.fontWeight = "bold";
-      el.style.fontSize = "1.2rem";
-      el.style.padding = "8px 24px";
-      el.style.borderRadius = "10px";
-      el.style.zIndex = "10001";
-      el.style.border = "1px solid #c49a3a";
-      el.style.boxShadow = "0 2px 12px #000";
-      document.body.appendChild(el);
-    }
-    el.innerText = msg;
-    el.style.opacity = "1";
-    el.style.display = "block";
-    setTimeout(() => {
-      el.style.opacity = "0";
-      setTimeout(() => { el.style.display = "none"; }, 400);
-    }, 1000);
-  }
 
   updateGhostUI() {
     if (!this.isGhost || !this.corpsePosition) {

@@ -10,6 +10,7 @@ export class ThirdPersonCamera {
   rotation: { x: number; y: number } = { x: 0, y: 0 };
   distance: number = 10;
   allowFreeRotation: boolean = false;
+  private leftHoldTimeout: number | null = null;
 
   constructor(camera: THREE.PerspectiveCamera, player: Player) {
     this.camera = camera;
@@ -18,6 +19,8 @@ export class ThirdPersonCamera {
     // Eventi mouse
     window.addEventListener("mousemove", (e) => this.onMouseMove(e));
     window.addEventListener("wheel", (e) => this.onWheel(e));
+    window.addEventListener("mousedown", (e) => this.onMouseDown(e));
+    window.addEventListener("mouseup", (e) => this.onMouseUp(e));
   }
 
   onMouseMove(event: MouseEvent) {
@@ -35,22 +38,18 @@ export class ThirdPersonCamera {
 
   onMouseDown(event: MouseEvent) {
     if (event.button === 0) {
-      // Raycast per vedere se si clicca su un enemy
-      const mouse = new THREE.Vector2(
-        (event.clientX / window.innerWidth) * 2 - 1,
-        -(event.clientY / window.innerHeight) * 2 + 1
-      );
-      const raycaster = new THREE.Raycaster();
-      raycaster.setFromCamera(mouse, this.camera);
-      // Trova oggetti enemy
-      const enemyMeshes = (window as any).game?.enemies?.map((e: any) => e.mesh) || [];
-      const intersects = raycaster.intersectObjects(enemyMeshes, true);
-      this.allowFreeRotation = intersects.length === 0;
+      // Start a long-press timer to enable free camera without affecting movement
+      if (this.leftHoldTimeout) window.clearTimeout(this.leftHoldTimeout);
+      this.leftHoldTimeout = window.setTimeout(() => {
+        this.allowFreeRotation = true;
+      }, 160);
     }
   }
 
   onMouseUp(event: MouseEvent) {
     if (event.button === 0) {
+      if (this.leftHoldTimeout) window.clearTimeout(this.leftHoldTimeout);
+      this.leftHoldTimeout = null;
       this.allowFreeRotation = false;
     }
   }
@@ -68,6 +67,8 @@ export class ThirdPersonCamera {
     );
 
     const cameraPos = this.target.mesh.position.clone().add(offset);
+    // Prevent camera from dipping under the ground plane
+    cameraPos.y = Math.max(1, cameraPos.y);
     this.camera.position.copy(cameraPos);
     this.camera.lookAt(this.target.mesh.position);
   }

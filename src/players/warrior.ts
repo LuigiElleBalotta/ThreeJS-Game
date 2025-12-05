@@ -1,5 +1,6 @@
 import { Player } from "../player";
 import { ClipMap } from "../animationController";
+import { Spell } from "../types";
 
 export class WarriorPlayer extends Player {
     constructor() {
@@ -28,5 +29,16 @@ export class WarriorPlayer extends Player {
       jump: this.actions["SwordAndShieldJump"] ? "SwordAndShieldJump" : base.jump,
       attack: attacks.length ? attacks : base.attack,
     };
+  }
+
+  onSpellCast(spell: Spell, context: { inCombat: boolean }) {
+    if (context.inCombat && this.animController) {
+      this.animController.playAttack();
+    }
+  }
+
+  onMoveStart(direction: THREE.Vector3) {
+    // ensure run animation picks forward motion even if spell hooks change in future
+    if (this.animController) this.animController.setState({ moving: true, backwards: direction.z > 0, airborne: false, attacking: false });
   }
 }

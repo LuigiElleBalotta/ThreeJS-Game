@@ -4,6 +4,7 @@ import type { GLTF } from "three/examples/jsm/loaders/GLTFLoader";
 import { AnimationMixer, AnimationAction, LoopOnce } from "three";
 import { getClassById } from "./classes";
 import { AnimationController, ClipMap } from "./animationController";
+import { Spell } from "./types";
 
 export class Player {
   maxHp: number = 100;
@@ -32,6 +33,7 @@ export class Player {
   isAttacking: boolean = false;
   attackProgress: number = 0;
   moveState = { moving: false, backwards: false };
+  isInCombat: boolean = false;
 
   mixer?: AnimationMixer;
   actions: { [name: string]: AnimationAction } = {};
@@ -165,6 +167,7 @@ export class Player {
     this.hp = Math.max(this.hp - amount, 0);
     const event = new CustomEvent("playerDamage", { detail: { amount } });
     window.dispatchEvent(event);
+    this.onTakeDamage(amount);
   }
 
   isAlive(): boolean {
@@ -231,6 +234,7 @@ export class Player {
       this.velocityY = 0.32;
       this.isOnGround = false;
       this.updateAnimationState();
+      this.onJump();
     }
   }
 
@@ -252,6 +256,43 @@ export class Player {
       airborne: !this.isOnGround,
       attacking: this.isAttacking,
     });
+  }
+
+  // Hook for subclasses to react to spell casts
+  onSpellCast(spell: Spell, context: { inCombat: boolean }) {
+    // default: no-op
+  }
+
+  onSpellImpact(spell: Spell, ctx: { target?: any; damage?: number }) {
+    // default: no-op
+  }
+
+  onEnterCombat() {
+    this.isInCombat = true;
+  }
+
+  onLeaveCombat() {
+    this.isInCombat = false;
+  }
+
+  onMoveStart(direction: THREE.Vector3) {
+    // default: no-op
+  }
+
+  onMoveStop() {
+    // default: no-op
+  }
+
+  onJump() {
+    // default: no-op
+  }
+
+  onTakeDamage(amount: number, source?: any) {
+    // default: no-op
+  }
+
+  onDealDamage(amount: number, target?: any, spell?: Spell) {
+    // default: no-op
   }
 
   gainXp(amount: number) {

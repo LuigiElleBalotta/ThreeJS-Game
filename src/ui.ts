@@ -27,6 +27,8 @@ export class UI {
   chatBox!: HTMLDivElement;
   chatList!: HTMLDivElement;
   chatInput!: HTMLInputElement;
+  gossipOverlay: HTMLDivElement | null = null;
+  gossipBody: HTMLDivElement | null = null;
 
   constructor(){
     this.playerHealthBar = document.getElementById("ui-player-health-bar") as HTMLDivElement;
@@ -209,9 +211,9 @@ export class UI {
       const overlay = document.createElement("div");
       overlay.id = id;
       overlay.style.position = "fixed";
-      overlay.style.top = "50%";
-      overlay.style.left = "50%";
-      overlay.style.transform = "translate(-50%, -50%)";
+      overlay.style.top = "120px";
+      overlay.style.left = "32px";
+      overlay.style.transform = "none";
       overlay.style.width = "580px";
       overlay.style.height = "420px";
       overlay.style.background = "linear-gradient(135deg, rgba(26,18,10,0.92), rgba(14,10,6,0.95))";
@@ -817,6 +819,116 @@ export class UI {
     if (this.lootOverlay) this.lootOverlay.style.display = "none";
     this.lootItems = [];
     this.lootOnTake = null;
+  }
+
+  showGossip(title: string, text: string, options: { id: string; text: string }[], onSelect: (id: string)=>void) {
+    if (!this.gossipOverlay) {
+      const overlay = document.createElement("div");
+      overlay.id = "gossip-window";
+      overlay.style.position = "fixed";
+      overlay.style.top = "50%";
+      overlay.style.left = "50%";
+      overlay.style.transform = "translate(-50%, -50%)";
+      overlay.style.width = "380px";
+      overlay.style.height = "480px";
+      overlay.style.background = "url('/ui/parchment-bg.jpg'), linear-gradient(180deg,#e6d2a5,#d0b37b)";
+      overlay.style.border = "2px solid #5a3a1a";
+      overlay.style.borderRadius = "10px";
+      overlay.style.boxShadow = "0 8px 22px rgba(0,0,0,0.75)";
+      overlay.style.display = "none";
+      overlay.style.zIndex = "10007";
+      overlay.style.padding = "14px";
+      overlay.style.color = "#3b230c";
+
+      const header = document.createElement("div");
+      header.style.display = "flex";
+      header.style.justifyContent = "space-between";
+      header.style.alignItems = "center";
+      header.style.marginBottom = "8px";
+      const titleEl = document.createElement("div");
+      titleEl.id = "gossip-title";
+      titleEl.style.fontWeight = "800";
+      titleEl.style.fontSize = "1.05rem";
+      titleEl.style.color = "#2c1b0b";
+      const close = document.createElement("button");
+      close.textContent = "×";
+      close.style.background = "transparent";
+      close.style.border = "none";
+      close.style.fontSize = "1.2rem";
+      close.style.cursor = "pointer";
+      close.onclick = () => this.hideGossip();
+      header.appendChild(titleEl);
+      header.appendChild(close);
+      overlay.appendChild(header);
+
+      const body = document.createElement("div");
+      body.id = "gossip-body";
+      body.style.flex = "1";
+      body.style.overflowY = "auto";
+      body.style.padding = "8px 4px";
+      overlay.appendChild(body);
+
+      this.gossipOverlay = overlay;
+      this.gossipBody = body;
+      document.body.appendChild(overlay);
+    }
+
+    if (!this.gossipOverlay || !this.gossipBody) return;
+    this.gossipOverlay.style.display = "block";
+    const titleEl = this.gossipOverlay.querySelector("#gossip-title") as HTMLDivElement;
+    if (titleEl) titleEl.textContent = title;
+    this.gossipBody.innerHTML = "";
+
+    const greeting = document.createElement("div");
+    greeting.style.margin = "6px 0 10px 0";
+    greeting.style.fontSize = "0.95rem";
+    greeting.textContent = text;
+    this.gossipBody.appendChild(greeting);
+
+    const section = document.createElement("div");
+    section.style.marginTop = "10px";
+    section.style.fontWeight = "700";
+    section.style.color = "#2c1b0b";
+    section.textContent = "Topics";
+    this.gossipBody.appendChild(section);
+
+    options.forEach(opt => {
+      const btn = document.createElement("button");
+      btn.textContent = opt.text;
+      btn.style.display = "block";
+      btn.style.width = "100%";
+      btn.style.textAlign = "left";
+      btn.style.margin = "6px 0";
+      btn.style.padding = "8px 10px";
+      btn.style.background = "rgba(255,255,255,0.6)";
+      btn.style.border = "1px solid #b48b54";
+      btn.style.borderRadius = "8px";
+      btn.style.cursor = "pointer";
+      btn.style.color = "#2c1b0b";
+      btn.onmouseenter = ()=> btn.style.background = "rgba(255,255,200,0.8)";
+      btn.onmouseleave = ()=> btn.style.background = "rgba(255,255,255,0.6)";
+      btn.onclick = ()=> onSelect(opt.id);
+      this.gossipBody!.appendChild(btn);
+    });
+
+    const footer = document.createElement("div");
+    footer.style.marginTop = "14px";
+    footer.style.textAlign = "right";
+    const bye = document.createElement("button");
+    bye.textContent = "Goodbye";
+    bye.style.padding = "6px 10px";
+    bye.style.background = "#b25c00";
+    bye.style.color = "#fff";
+    bye.style.border = "1px solid #7a3c00";
+    bye.style.borderRadius = "6px";
+    bye.style.cursor = "pointer";
+    bye.onclick = () => this.hideGossip();
+    footer.appendChild(bye);
+    this.gossipBody.appendChild(footer);
+  }
+
+  hideGossip() {
+    if (this.gossipOverlay) this.gossipOverlay.style.display = "none";
   }
 
   renderLootPage(page: number) {

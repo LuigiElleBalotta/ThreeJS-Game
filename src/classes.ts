@@ -5,7 +5,7 @@ export const CHARACTER_CLASSES: CharacterClass[] = [
     id: "warrior",
     name: "Warrior",
     baseStats: { hp: 140, mana: 60, attackDamage: 22 },
-    starterSpells: ["heroic_strike", "shield_block"],
+    starterSpells: ["heroic_strike", "shield_block", "charge"],
   },
   {
     id: "mage",

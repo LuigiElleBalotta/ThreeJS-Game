@@ -9,6 +9,7 @@ export interface CreatureTemplate {
   scale?: number;
   speed?: number;
   canFly?: boolean;
+  gossipMenuId?: string;
 }
 
 export interface CreatureSpawn {
@@ -29,6 +30,7 @@ export const creatureTemplates: Record<string, CreatureTemplate> = {
     exp: 0,
     scale: 0.7,
     speed: 0.06,
+    gossipMenuId: "villager_gossip",
   },
   pirate_bandit: {
     id: "pirate_bandit",
@@ -72,6 +74,7 @@ export const creatureTemplates: Record<string, CreatureTemplate> = {
     exp: 0,
     scale: 0.75,
     speed: 0.065,
+    gossipMenuId: "wizard_gossip",
   },
   guard_robot: {
     id: "guard_robot",

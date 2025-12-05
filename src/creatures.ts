@@ -10,6 +10,7 @@ export interface CreatureTemplate {
   speed?: number;
   canFly?: boolean;
   gossipMenuId?: string;
+  scriptId?: string;
 }
 
 export interface CreatureSpawn {
@@ -64,6 +65,7 @@ export const creatureTemplates: Record<string, CreatureTemplate> = {
     damage: 12,
     scale: 0.75,
     speed: 0.07,
+    scriptId: "evil_wizard_ai",
   },
   town_wizard: {
     id: "town_wizard",

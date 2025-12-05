@@ -283,7 +283,7 @@ export class Game {
         this.enemyBarDiv.style.top = "32px";
         this.enemyBarDiv.style.right = "32px";
         this.enemyBarDiv.style.width = "320px";
-        this.enemyBarDiv.style.height = "48px";
+        this.enemyBarDiv.style.height = "68px";
         this.enemyBarDiv.style.background = "linear-gradient(135deg, rgba(32,24,15,0.95), rgba(18,14,9,0.95))";
         this.enemyBarDiv.style.border = "2px solid #c49a3a";
         this.enemyBarDiv.style.borderRadius = "14px";
@@ -295,9 +295,12 @@ export class Game {
         <div id="enemy-bar-name" style="color:#f7d09b;font-weight:800;font-size:1.05rem;text-shadow:0 0 6px #000;">Enemy</div>
         <div id="enemy-aggro" style="color:#ff6d6d;font-weight:800;font-size:0.95rem;text-shadow:0 0 8px #000;">TARGET</div>
       </div>
-      <div style="width:90%;height:18px;background:#221414;border-radius:10px;margin:4px auto 6px auto;position:relative;overflow:hidden;border:1px solid #4b1f1f;">
+      <div style="width:90%;height:18px;background:#221414;border-radius:10px;margin:4px auto 4px auto;position:relative;overflow:hidden;border:1px solid #4b1f1f;">
         <div id="enemy-bar-hp" style="height:100%;background:linear-gradient(90deg,#7d0f0f,#d83d3d);border-radius:10px;width:100%;transition:width 0.2s;"></div>
         <div id="enemy-bar-hp-text" style="position:absolute;left:50%;top:0;transform:translateX(-50%);color:#fff;font-size:0.95rem;font-weight:800;text-shadow:0 0 4px #000;">HP</div>
+      </div>
+      <div style="width:90%;height:10px;background:#1a1a1a;border-radius:8px;margin:0 auto 6px auto;position:relative;overflow:hidden;border:1px solid #7f5b21;">
+        <div id="enemy-bar-cast" style="height:100%;background:linear-gradient(90deg,#e35d2e,#ffb27a);border-radius:8px;width:0%;transition:width 0.05s;"></div>
       </div>
     `;
         document.body.appendChild(this.enemyBarDiv);
@@ -1635,6 +1638,7 @@ export class Game {
                 const nameDiv = this.enemyBarDiv.querySelector("#enemy-bar-name") as HTMLDivElement;
                 const hpDiv = this.enemyBarDiv.querySelector("#enemy-bar-hp") as HTMLDivElement;
                 const hpText = this.enemyBarDiv.querySelector("#enemy-bar-hp-text") as HTMLDivElement;
+                const castDiv = this.enemyBarDiv.querySelector("#enemy-bar-cast") as HTMLDivElement;
                 const aggro = this.enemyBarDiv.querySelector("#enemy-aggro") as HTMLDivElement;
                 if (nameDiv) nameDiv.innerText = this.selectedEnemy.mesh.name || "Creature";
                 if (aggro) aggro.innerText = this.selectedEnemy.isEnemy ? "TARGET" : "FRIENDLY";
@@ -1643,6 +1647,16 @@ export class Game {
                     const maxHp = this.selectedEnemy.maxHp || 100;
                     hpDiv.style.width = `${(hp / maxHp) * 100}%`;
                     hpText.innerText = `${hp} / ${maxHp}`;
+                }
+                if (castDiv) {
+                    const castProg = this.selectedEnemy.getCastProgress(Date.now());
+                    if (castProg) {
+                        castDiv.style.width = `${castProg.pct * 100}%`;
+                        castDiv.style.display = "block";
+                    } else {
+                        castDiv.style.width = "0%";
+                        castDiv.style.display = "none";
+                    }
                 }
             } else {
                 this.enemyBarDiv.style.display = "none";
@@ -2027,6 +2041,7 @@ export class Game {
             enemy.xpWorth = template.exp;
             if (template.damage) enemy.damage = template.damage;
             if (template.speed) enemy.speed = template.speed;
+            if (template.scriptId) enemy.scriptId = template.scriptId;
             if (typeof spawn.orientation === "number") enemy.mesh.rotation.y = spawn.orientation;
             if (!spawn.isEnemy) this.placeFriendlyAwayFromObstacles(enemy);
             this.enemies.push(enemy);
@@ -2080,6 +2095,7 @@ export class Game {
         enemy.xpWorth = template.exp;
         if (template.damage) enemy.damage = template.damage;
         if (template.speed) enemy.speed = template.speed;
+        if (template.scriptId) enemy.scriptId = template.scriptId;
         enemy.mesh.rotation.y = orientation;
         if (!enemy.isEnemy) this.placeFriendlyAwayFromObstacles(enemy);
         this.enemies.push(enemy);

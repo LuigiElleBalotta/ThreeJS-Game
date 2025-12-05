@@ -3,6 +3,8 @@ import { Player } from "./player";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 import { clone } from "./utils/skeletonutils.js";
 import type { GLTF } from "three/examples/jsm/loaders/GLTFLoader";
+import { enemyScripts } from "./enemyScripts";
+import { evilWizardAI } from "./enemyScripts/evilWizard";
 
 export class Enemy {
     mesh: THREE.Group;
@@ -17,9 +19,14 @@ export class Enemy {
     damage: number = 5;
     cooldown: number = 1000;
     lastAttack: number = 0;
+    lastSpellTimes: Record<string, number> = {};
+    currentCast: { spell: any; target: Player; start: number; end: number } | null = null;
+    castBarDiv: HTMLDivElement | null = null;
+    castBarInner: HTMLDivElement | null = null;
     xpWorth: number = 35;
     rewardGranted: boolean = false;
     loot: string[] = [];
+    scriptId?: string;
 
     mixer?: THREE.AnimationMixer;
     actions: { [name: string]: THREE.AnimationAction } = {};
@@ -56,6 +63,37 @@ export class Enemy {
         this.healthBarInner.style.width = "100%";
         this.healthBarDiv.appendChild(this.healthBarInner);
         document.body.appendChild(this.healthBarDiv);
+
+        // Cast bar DOM (above health bar)
+        this.castBarDiv = document.createElement("div");
+        this.castBarDiv.style.position = "fixed";
+        this.castBarDiv.style.width = "64px";
+        this.castBarDiv.style.height = "6px";
+        this.castBarDiv.style.background = "#1a1a1a";
+        this.castBarDiv.style.border = "1px solid #7f5b21";
+        this.castBarDiv.style.borderRadius = "6px";
+        this.castBarDiv.style.overflow = "hidden";
+        this.castBarDiv.style.pointerEvents = "none";
+        this.castBarDiv.style.zIndex = "10001";
+        this.castBarDiv.style.display = "none";
+    this.castBarInner = document.createElement("div");
+    this.castBarInner.style.height = "100%";
+    this.castBarInner.style.width = "0%";
+    this.castBarInner.style.background = "linear-gradient(90deg,#e35d2e,#ffb27a)";
+    this.castBarInner.style.borderRadius = "6px";
+    this.castBarDiv.appendChild(this.castBarInner);
+    const castLabel = document.createElement("div");
+    castLabel.id = "enemy-cast-text";
+    castLabel.style.position = "absolute";
+    castLabel.style.left = "50%";
+    castLabel.style.top = "50%";
+    castLabel.style.transform = "translate(-50%,-50%)";
+    castLabel.style.color = "#f6d48b";
+    castLabel.style.fontSize = "9px";
+    castLabel.style.fontWeight = "700";
+    castLabel.style.pointerEvents = "none";
+    this.castBarDiv.appendChild(castLabel);
+        document.body.appendChild(this.castBarDiv);
 
         // Selezione nemico tramite click/tap sulla healthbar
         this.healthBarDiv.addEventListener("click", (e) => {
@@ -114,6 +152,7 @@ export class Enemy {
     updateHealthBar(camera: THREE.Camera) {
         if (!this.alive) {
             this.healthBarDiv.style.display = "none";
+            if (this.castBarDiv) this.castBarDiv.style.display = "none";
             return;
         }
         // Usa la posizione della testa calcolata una volta sola
@@ -125,6 +164,12 @@ export class Enemy {
             this.healthBarDiv.style.left = `${x}px`;
             this.healthBarDiv.style.top = `${y}px`;
             this.healthBarDiv.style.display = "block";
+            if (this.castBarDiv) {
+                this.castBarDiv.style.left = `${x}px`;
+                // place castbar under the healthbar
+                this.castBarDiv.style.top = `${y + 12}px`;
+                this.castBarDiv.style.display = this.currentCast ? "block" : "none";
+            }
         }
 
         // Aggiorna la barra in base agli hp
@@ -160,6 +205,7 @@ export class Enemy {
 
     destroyHealthBar() {
         this.healthBarDiv.remove();
+        if (this.castBarDiv) this.castBarDiv.remove();
     }
 
     update(player: Player, camera?: THREE.Camera, playerIsGhost: boolean = false) {
@@ -183,7 +229,11 @@ export class Enemy {
 
         const leashRange = 25;
 
-        if (distance < leashRange) {
+        this.updateCasting(Date.now(), player);
+
+    if (this.currentCast) {
+        // lock movement while casting
+    } else if (distance < leashRange) {
             // zig-zag chase
             const perpendicular = new THREE.Vector3(-dirToPlayer.z, 0, dirToPlayer.x);
             const zigzag = Math.sin(Date.now() * 0.005) * 0.5;
@@ -212,5 +262,57 @@ export class Enemy {
             }
             this.hp = this.maxHp;
         }
+
+        // Run script AI (for casters etc.)
+        if (this.scriptId && enemyScripts[this.scriptId]) {
+            enemyScripts[this.scriptId](this, { player, now: Date.now(), delta: 1 / 60 });
+        }
     }
+
+    startCast(spell: any, target: Player, now: number) {
+        const castTime = spell.castTime ?? 0;
+        if (castTime <= 0) {
+            const dmg = enemySpellDamage(spell, this);
+            target.takeDamage(dmg);
+            window.dispatchEvent(new CustomEvent("playerDamage", { detail: { amount: dmg, sourceEnemy: this } }));
+            return;
+        }
+        this.currentCast = { spell, target, start: now, end: now + castTime };
+        if (this.castBarInner) this.castBarInner.style.width = "0%";
+    }
+
+  updateCasting(now: number, player: Player) {
+    if (!this.currentCast) return;
+    const { spell, start, end, target } = this.currentCast;
+    const t = Math.min(1, (now - start) / (end - start));
+    if (this.castBarInner) this.castBarInner.style.width = `${t * 100}%`;
+    const label = this.castBarDiv?.querySelector("#enemy-cast-text") as HTMLDivElement | null;
+    if (label) {
+        const remaining = Math.max(0, (end - now) / 1000).toFixed(1);
+        label.textContent = `${spell.name} (${remaining}s)`;
+    }
+    if (now >= end) {
+      const dmg = enemySpellDamage(spell, this);
+      target.takeDamage(dmg);
+      window.dispatchEvent(new CustomEvent("playerDamage", { detail: { amount: dmg, sourceEnemy: this } }));
+      this.currentCast = null;
+      if (this.castBarDiv) this.castBarDiv.style.display = "none";
+    }
+  }
+
+  getCastProgress(now: number) {
+    if (!this.currentCast) return null;
+    const { start, end, spell } = this.currentCast;
+    const pct = Math.min(1, (now - start) / (end - start));
+    const remaining = Math.max(0, (end - now) / 1000);
+    return { pct, remaining, spell };
+  }
+}
+
+function enemySpellDamage(spell: any, enemy: Enemy) {
+    const base = enemy.damage || 8;
+    const mult = spell.damageMult ?? 1;
+    const critChance = spell.critChance ?? 0.1;
+    const isCrit = Math.random() < critChance;
+    return Math.round(base * mult * (isCrit ? 2 : 1));
 }

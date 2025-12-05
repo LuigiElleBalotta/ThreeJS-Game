@@ -15,23 +15,20 @@ export const charge: Spell = {
   critChance: 0.1,
   execute: ({ player, target, game }) => {
     if (!target) return 0;
-    // Move player to melee range in front of target
     const dir = new THREE.Vector3().subVectors(target.mesh.position, player.mesh.position);
     dir.y = 0;
     const dist = dir.length();
-    if (dist > 0.001) {
-      dir.normalize();
-      const stopDist = Math.max(1.4, player.attackRange - 0.2);
-      const newPos = target.mesh.position.clone().addScaledVector(dir, -stopDist);
-      newPos.y = Math.max(1, newPos.y);
-      player.mesh.position.copy(newPos);
-      player.mesh.rotation.y = Math.atan2(dir.x, dir.z);
-    }
-    const isCrit = Math.random() < charge.critChance;
-    const dmg = Math.round(player.attackDamage * charge.damageMult * (isCrit ? 2 : 1));
-    target.takeDamage(dmg);
-    // small camera shake effect (optional)
-    game?.camera.position.add(new THREE.Vector3((Math.random()-0.5)*0.2,0,(Math.random()-0.5)*0.2));
-    return dmg;
+    const stopDist = Math.max(1.4, player.attackRange - 0.2);
+    const travelDist = Math.max(0, dist - stopDist);
+    // set a short-lived charge motion on player
+    (player as any).chargeState = {
+      dir: dir.normalize(),
+      remaining: travelDist,
+      speed: Math.max(0.55, player.speed * 4),
+      target,
+      spellId: "charge",
+    };
+    // damage will be applied on impact by the game update when remaining<=0
+    return 0;
   },
 };

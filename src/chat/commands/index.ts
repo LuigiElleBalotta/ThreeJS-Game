@@ -6,6 +6,7 @@ import { gmCommand } from "./gm";
 import { flyCommand } from "./fly";
 import { moveHereCommand } from "./moveHere";
 import { dayNightCommand } from "./daynight";
+import { hasScriptCommand } from "./hasScript";
 
 export type ChatCommandHandler = (args: string[], ctx: { game: Game }) => void;
 
@@ -17,6 +18,7 @@ const commands: Record<string, ChatCommandHandler> = {
   fly: flyCommand,
   movehere: moveHereCommand,
   daynight: dayNightCommand,
+  hasscript: hasScriptCommand,
 };
 
 export function handleChatCommand(raw: string, ctx: { game: Game }): boolean {

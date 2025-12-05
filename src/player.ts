@@ -34,6 +34,7 @@ export class Player {
   attackProgress: number = 0;
   moveState = { moving: false, backwards: false };
   isInCombat: boolean = false;
+  chargeState?: { dir: THREE.Vector3; remaining: number; speed: number; target: any; spellId: string };
 
   mixer?: AnimationMixer;
   actions: { [name: string]: AnimationAction } = {};
@@ -198,6 +199,20 @@ export class Player {
   update(delta: number) {
     if (this.mixer) {
       this.mixer.update(delta);
+    }
+
+    // Charge movement
+    if (this.chargeState) {
+      const step = this.chargeState.speed * delta * 60;
+      const move = Math.min(step, this.chargeState.remaining);
+      this.mesh.position.addScaledVector(this.chargeState.dir, move);
+      this.chargeState.remaining -= move;
+      this.setMovementState(true, false);
+      if (this.chargeState.remaining <= 0) {
+        this.setMovementState(false, false);
+        this.chargeState = undefined;
+        // impact handled in game update (onDealDamage) when spell executes
+      }
     }
 
     // Fisica salto/volo

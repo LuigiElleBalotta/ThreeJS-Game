@@ -70,7 +70,7 @@ export class Game {
     logoutBtn: HTMLButtonElement | null = null;
     inventory: any[] = [];
     gold: number = 0;
-    learnedTalents: Set<string> = new Set();
+  learnedTalents: Set<string> = new Set();
     lootTarget: Enemy | null = null;
     npcs: { mesh: THREE.Object3D; name: string; template: CreatureTemplate }[] = [];
     creaturePrefabs: Record<string, any> = {};
@@ -1257,6 +1257,11 @@ export class Game {
             if (typeof savedState.xp === "number") this.player.xp = savedState.xp;
             if (typeof savedState.xpToNext === "number") this.player.xpToNext = savedState.xpToNext;
         }
+        // Apply learned talents (stats adjustments)
+        this.applyLearnedTalents();
+        // Clamp hp/mana after talents
+        this.player.hp = Math.min(this.player.hp ?? this.player.maxHp, this.player.maxHp);
+        this.player.mana = Math.min(this.player.mana ?? this.player.maxMana, this.player.maxMana);
 
         // Calcola direzione verso il nemico (5, 1, 5)
         const toEnemy = new THREE.Vector3(5, 1, 5).sub(this.player.mesh.position);
@@ -2197,13 +2202,21 @@ export class Game {
         });
     }
 
-    togglePauseMenu() {
+  togglePauseMenu() {
         this.paused = !this.paused;
         if (this.paused) {
             this.showPauseMenu();
         } else {
             this.hidePauseMenu();
         }
+    }
+
+    applyLearnedTalents() {
+        const talents = getTalentsForClass(this.player.classId);
+        this.learnedTalents.forEach((tid) => {
+            const t = talents.find(t => t.id === tid);
+            if (t) t.apply({ player: this.player, game: this });
+        });
     }
 
     showPauseMenu() {

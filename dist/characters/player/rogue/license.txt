@@ -1,0 +1,11 @@
+Model Information:
+* title:	Rogue
+* source:	https://sketchfab.com/3d-models/rogue-0c016004f0894083af7b8ebb83a92146
+* author:	Regex (https://sketchfab.com/Regex)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Rogue" (https://sketchfab.com/3d-models/rogue-0c016004f0894083af7b8ebb83a92146) by Regex (https://sketchfab.com/Regex) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)

@@ -5,6 +5,8 @@ import { clone } from "./utils/skeletonutils.js";
 import type { GLTF } from "three/examples/jsm/loaders/GLTFLoader";
 import { enemyScripts } from "./enemyScripts";
 import { evilWizardAI } from "./enemyScripts/evilWizard";
+import { waypointScripts, WaypointScriptFn } from "./waypointScripts";
+import { CreatureSpawn } from "./creatures";
 
 export class Enemy {
     mesh: THREE.Group;
@@ -13,7 +15,19 @@ export class Enemy {
     hp: number = this.maxHp;
     isEnemy: boolean = true;
     templateId?: string;
+    spawnId?: string;
+    factionId: string = "hostile";
+    canRespawn: boolean = false;
+    respawnDelay: number = 0;
+    deathTime: number = 0;
+    spawnDefinition: CreatureSpawn | null = null;
+    isRare: boolean = false;
     alive: boolean = true;
+    waypoints: THREE.Vector3[] = [];
+    currentWaypointIndex: number = 0;
+    patrolWaitMs: number = 800;
+    patrolPausedUntil: number = 0;
+    waypointEvents: (WaypointScriptFn | null)[] = [];
     spawnPosition: THREE.Vector3;
     attackRange: number = 1.5;
     damage: number = 5;
@@ -76,23 +90,23 @@ export class Enemy {
         this.castBarDiv.style.pointerEvents = "none";
         this.castBarDiv.style.zIndex = "10001";
         this.castBarDiv.style.display = "none";
-    this.castBarInner = document.createElement("div");
-    this.castBarInner.style.height = "100%";
-    this.castBarInner.style.width = "0%";
-    this.castBarInner.style.background = "linear-gradient(90deg,#e35d2e,#ffb27a)";
-    this.castBarInner.style.borderRadius = "6px";
-    this.castBarDiv.appendChild(this.castBarInner);
-    const castLabel = document.createElement("div");
-    castLabel.id = "enemy-cast-text";
-    castLabel.style.position = "absolute";
-    castLabel.style.left = "50%";
-    castLabel.style.top = "50%";
-    castLabel.style.transform = "translate(-50%,-50%)";
-    castLabel.style.color = "#f6d48b";
-    castLabel.style.fontSize = "9px";
-    castLabel.style.fontWeight = "700";
-    castLabel.style.pointerEvents = "none";
-    this.castBarDiv.appendChild(castLabel);
+        this.castBarInner = document.createElement("div");
+        this.castBarInner.style.height = "100%";
+        this.castBarInner.style.width = "0%";
+        this.castBarInner.style.background = "linear-gradient(90deg,#e35d2e,#ffb27a)";
+        this.castBarInner.style.borderRadius = "6px";
+        this.castBarDiv.appendChild(this.castBarInner);
+        const castLabel = document.createElement("div");
+        castLabel.id = "enemy-cast-text";
+        castLabel.style.position = "absolute";
+        castLabel.style.left = "50%";
+        castLabel.style.top = "50%";
+        castLabel.style.transform = "translate(-50%,-50%)";
+        castLabel.style.color = "#f6d48b";
+        castLabel.style.fontSize = "9px";
+        castLabel.style.fontWeight = "700";
+        castLabel.style.pointerEvents = "none";
+        this.castBarDiv.appendChild(castLabel);
         document.body.appendChild(this.castBarDiv);
 
         // Selezione nemico tramite click/tap sulla healthbar
@@ -127,6 +141,15 @@ export class Enemy {
         this.speed = 0.03 + Math.random() * 0.02; // velocità leggermente variabile
     }
 
+    setRare(mult: number = 1.4) {
+        this.isRare = true;
+        this.maxHp = Math.round(this.maxHp * mult);
+        this.hp = this.maxHp;
+        this.damage = Math.round(this.damage * mult);
+        this.xpWorth = Math.round(this.xpWorth * mult);
+        if (this.healthBarInner) this.healthBarInner.style.background = "linear-gradient(90deg,#5b0f5b,#d26bff)";
+    }
+
     isAlive() {
         return this.alive;
     }
@@ -134,7 +157,10 @@ export class Enemy {
     takeDamage(amount: number) {
         if (!this.alive || !this.isEnemy) return;
         this.hp = Math.max(this.hp - amount, 0);
-        if (this.hp <= 0) this.alive = false;
+        if (this.hp <= 0) {
+            this.alive = false;
+            this.deathTime = Date.now();
+        }
     }
 
     getBoundingBox(pos?: THREE.Vector3) {
@@ -220,8 +246,11 @@ export class Enemy {
 
         if (camera) this.updateHealthBar(camera);
 
-        // Friendly creatures: no AI behavior
-        if (!this.isEnemy || player.isGameMaster || !player.isAlive() || playerIsGhost) return;
+        // Friendly creatures: can still patrol
+        if (!this.isEnemy || player.isGameMaster || !player.isAlive() || playerIsGhost) {
+            if (this.waypoints.length > 0) this.updatePatrol();
+            return;
+        }
 
         const dirToPlayer = new THREE.Vector3().subVectors(player.mesh.position, this.mesh.position);
         const distance = dirToPlayer.length();
@@ -231,9 +260,9 @@ export class Enemy {
 
         this.updateCasting(Date.now(), player);
 
-    if (this.currentCast) {
-        // lock movement while casting
-    } else if (distance < leashRange) {
+        if (this.currentCast) {
+            // lock movement while casting
+        } else if (distance < leashRange) {
             // zig-zag chase
             const perpendicular = new THREE.Vector3(-dirToPlayer.z, 0, dirToPlayer.x);
             const zigzag = Math.sin(Date.now() * 0.005) * 0.5;
@@ -250,6 +279,8 @@ export class Enemy {
                     this.lastAttack = now;
                 }
             }
+        } else if (this.waypoints.length > 0) {
+            this.updatePatrol();
         } else {
             // leash back to spawn and heal
             const toSpawn = new THREE.Vector3().subVectors(this.spawnPosition, this.mesh.position);
@@ -281,32 +312,58 @@ export class Enemy {
         if (this.castBarInner) this.castBarInner.style.width = "0%";
     }
 
-  updateCasting(now: number, player: Player) {
-    if (!this.currentCast) return;
-    const { spell, start, end, target } = this.currentCast;
-    const t = Math.min(1, (now - start) / (end - start));
-    if (this.castBarInner) this.castBarInner.style.width = `${t * 100}%`;
-    const label = this.castBarDiv?.querySelector("#enemy-cast-text") as HTMLDivElement | null;
-    if (label) {
-        const remaining = Math.max(0, (end - now) / 1000).toFixed(1);
-        label.textContent = `${spell.name} (${remaining}s)`;
+    updateCasting(now: number, player: Player) {
+        if (!this.currentCast) return;
+        const { spell, start, end, target } = this.currentCast;
+        const t = Math.min(1, (now - start) / (end - start));
+        if (this.castBarInner) this.castBarInner.style.width = `${t * 100}%`;
+        const label = this.castBarDiv?.querySelector("#enemy-cast-text") as HTMLDivElement | null;
+        if (label) {
+            const remaining = Math.max(0, (end - now) / 1000).toFixed(1);
+            label.textContent = `${spell.name} (${remaining}s)`;
+        }
+        if (now >= end) {
+            const dmg = enemySpellDamage(spell, this);
+            target.takeDamage(dmg);
+            window.dispatchEvent(new CustomEvent("playerDamage", { detail: { amount: dmg, sourceEnemy: this } }));
+            this.currentCast = null;
+            if (this.castBarDiv) this.castBarDiv.style.display = "none";
+        }
     }
-    if (now >= end) {
-      const dmg = enemySpellDamage(spell, this);
-      target.takeDamage(dmg);
-      window.dispatchEvent(new CustomEvent("playerDamage", { detail: { amount: dmg, sourceEnemy: this } }));
-      this.currentCast = null;
-      if (this.castBarDiv) this.castBarDiv.style.display = "none";
-    }
-  }
 
-  getCastProgress(now: number) {
-    if (!this.currentCast) return null;
-    const { start, end, spell } = this.currentCast;
-    const pct = Math.min(1, (now - start) / (end - start));
-    const remaining = Math.max(0, (end - now) / 1000);
-    return { pct, remaining, spell };
-  }
+    setPatrol(waypoints: THREE.Vector3[], waitMs: number = 800, events?: (string | undefined)[]) {
+        this.waypoints = waypoints;
+        this.patrolWaitMs = waitMs;
+        this.currentWaypointIndex = 0;
+        this.waypointEvents = (events || []).map(id => (id ? waypointScripts[id] ?? null : null));
+    }
+
+    updatePatrol() {
+        if (this.waypoints.length === 0) return;
+        const now = Date.now();
+        if (this.patrolPausedUntil && now < this.patrolPausedUntil) return;
+        const target = this.waypoints[this.currentWaypointIndex];
+        const dir = target.clone().sub(this.mesh.position);
+        const dist = dir.length();
+        if (dist < 0.6) {
+            const ev = this.waypointEvents[this.currentWaypointIndex] || null;
+            if (ev) ev(this);
+            this.currentWaypointIndex = (this.currentWaypointIndex + 1) % this.waypoints.length;
+            this.patrolPausedUntil = now + this.patrolWaitMs;
+            return;
+        }
+        dir.normalize();
+        this.mesh.position.addScaledVector(dir, this.speed * 0.9);
+        this.mesh.rotation.y = Math.atan2(dir.x, dir.z);
+    }
+
+    getCastProgress(now: number) {
+        if (!this.currentCast) return null;
+        const { start, end, spell } = this.currentCast;
+        const pct = Math.min(1, (now - start) / (end - start));
+        const remaining = Math.max(0, (end - now) / 1000);
+        return { pct, remaining, spell };
+    }
 }
 
 function enemySpellDamage(spell: any, enemy: Enemy) {

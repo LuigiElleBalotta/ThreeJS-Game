@@ -1,4 +1,4 @@
-import * as THREE from "three";
+﻿import * as THREE from "three";
 import { Player } from "./player";
 import { Enemy } from "./enemy";
 import { UI } from "./client/ui";
@@ -15,9 +15,15 @@ import { RoguePlayer } from "./players/rogue";
 import { MagePlayer } from "./players/mage";
 import { SpellFX } from "./spellFx";
 import { gossipMenus, npcTexts } from "./dialogs";
+import { AmmoPhysics } from "@enable3d/ammo-physics";
+import { createPhysics, addGround } from "./physics";
+import { QUESTS, QuestDefinition, QuestProgressState } from "./quests";
+import { waypointScripts } from "./waypointScripts";
+import { CreatureSpawn } from "./creatures";
 
 export class Game {
     scene: THREE.Scene;
+    physics!: AmmoPhysics;
     camera: THREE.PerspectiveCamera;
     renderer: THREE.WebGLRenderer;
     player!: Player;
@@ -47,7 +53,7 @@ export class Game {
 
     audio: HTMLAudioElement;
     audioStarted: boolean = false;
-    mousePos = { x: 0, y: 0 };
+    mousePos = new THREE.Vector2(0, 0);
     selectedEnemy: Enemy | null = null;
     selectionCircle: THREE.Mesh | null = null;
     damageTexts: { div: HTMLDivElement, start: number, angle: number }[] = [];
@@ -64,18 +70,6 @@ export class Game {
     corpseMarker: THREE.Mesh | null = null;
     corpseArrow: HTMLDivElement | null = null;
     revivePopup: HTMLDivElement | null = null;
-    reviveRadius: number = 8;
-
-    enemyBarDiv: HTMLDivElement | null = null;
-    logoutBtn: HTMLButtonElement | null = null;
-    inventory: any[] = [];
-    gold: number = 0;
-  learnedTalents: Set<string> = new Set();
-    lootTarget: Enemy | null = null;
-    npcs: { mesh: THREE.Object3D; name: string; template: CreatureTemplate }[] = [];
-    creaturePrefabs: Record<string, any> = {};
-    gameObjectPrefabs: Record<string, any> = {};
-    volatileSpawns: { creatures: any[]; gameobjects: any[] } = { creatures: [], gameobjects: [] };
     gossipTarget: Enemy | null = null;
     creatureTemplates = creatureTemplates;
     gameObjectTemplates = gameObjectTemplates;
@@ -83,6 +77,21 @@ export class Game {
     pauseOverlay: HTMLDivElement | null = null;
     playerWasMoving: boolean = false;
     isGM: boolean = false;
+
+    enemyBarDiv: HTMLDivElement | null = null;
+    logoutBtn: HTMLButtonElement | null = null;
+    inventory: any[] = [];
+    gold: number = 0;
+    learnedTalents: Set<string> = new Set();
+    questLog: QuestProgressState[] = [];
+    waypointUpdateTimer: number = 0;
+    lootTarget: Enemy | null = null;
+    npcs: { mesh: THREE.Object3D; name: string; template: CreatureTemplate }[] = [];
+    creaturePrefabs: Record<string, any> = {};
+    gameObjectPrefabs: Record<string, any> = {};
+    volatileSpawns: { creatures: any[]; gameobjects: any[] } = { creatures: [], gameobjects: [] };
+    respawnQueue: { time: number, spawn: CreatureSpawn }[] = [];
+    reviveRadius: number = 5;
 
     lastCombatTime: number = 0;
     lastLogTime: number = 0;
@@ -207,7 +216,7 @@ export class Game {
         window.addEventListener("orientationchange", resizeCanvas);
 
         // Fullscreen button (mobile)
-        // RIMOSSO: non mostrare più il tasto fullscreen su mobile
+        // RIMOSSO: non mostrare pi├╣ il tasto fullscreen su mobile
 
         // Musica di sottofondo
         this.audio = new Audio("/music/background.mp3");
@@ -255,6 +264,7 @@ export class Game {
             if (key === "9") this.castSpell(8);
             if (key === "0") this.castSpell(9);
             if (key === "-") this.castSpell(10);
+            if (key.toLowerCase() === "l") this.toggleQuestLog();
             if (key === "Escape") {
                 if (this.selectedEnemy) {
                     this.selectedEnemy = null;
@@ -365,7 +375,7 @@ export class Game {
             const amount = e.detail.amount;
             // Combat timer: resetta ogni danno subito
             this.lastCombatTime = performance.now();
-            // Se chi ha inflitto il danno è noto e non è già selezionato, selezionalo
+            // Se chi ha inflitto il danno ├¿ noto e non ├¿ gi├á selezionato, selezionalo
             if (e.detail && e.detail.sourceEnemy && (!this.selectedEnemy || this.selectedEnemy !== e.detail.sourceEnemy)) {
                 this.selectedEnemy = e.detail.sourceEnemy;
             }
@@ -557,7 +567,7 @@ export class Game {
 
             // Jump button a sinistra del contenitore
             const jumpBtn = document.createElement("button");
-            jumpBtn.innerText = "⤒";
+            jumpBtn.innerText = "ÔñÆ";
             jumpBtn.style.width = "60px";
             jumpBtn.style.height = "60px";
             jumpBtn.style.fontSize = "2rem";
@@ -682,7 +692,7 @@ export class Game {
             // RIMUOVI il blocco globale degli eventi touch su spellbar e controller mobile
 
             swipeArea.addEventListener("touchstart", (e) => {
-                // Ignora se il target è knobArea o spellbar o figli
+                // Ignora se il target ├¿ knobArea o spellbar o figli
                 const target = e.target as HTMLElement;
                 if (
                     target.closest("#mobile-controller") ||
@@ -700,7 +710,7 @@ export class Game {
                     e.preventDefault();
                     const dx = e.touches[0].clientX - lastTouchX;
                     lastTouchX = e.touches[0].clientX;
-                    // Sensibilità swipe (più basso = più sensibile)
+                    // Sensibilit├á swipe (pi├╣ basso = pi├╣ sensibile)
                     this.cameraControl.rotation.y -= dx * 0.008;
                 }
             }, { passive: false });
@@ -1130,39 +1140,31 @@ export class Game {
         if (this.worldInitialized) return;
         this.worldInitialized = true;
         if (this.loaderDiv) this.loaderDiv.style.display = "flex";
+
+        // Initialize Physics (Enable3D)
+        try {
+            this.physics = await createPhysics(this.scene);
+        } catch (err) {
+            console.error("Physics init failed", err);
+        }
+
         // Luce e atmosfera tipo WoW
         this.ambientLight = new THREE.AmbientLight(0xc7b9a2, 0.55);
         this.scene.add(this.ambientLight);
         this.sunLight = new THREE.DirectionalLight(0xfff0d0, 1.05);
         this.sunLight.position.set(18, 24, 12);
+        this.sunLight.castShadow = true;
         this.scene.add(this.sunLight);
 
-        // Terreno procedurale (nessun asset remoto)
-        const canvas = document.createElement("canvas");
-        canvas.width = 64;
-        canvas.height = 64;
-        const ctx = canvas.getContext("2d");
-        if (ctx) {
-            const grd = ctx.createLinearGradient(0, 0, 64, 64);
-            grd.addColorStop(0, "#3f4b2c");
-            grd.addColorStop(1, "#2f381f");
-            ctx.fillStyle = grd;
-            ctx.fillRect(0, 0, 64, 64);
-            for (let i = 0; i < 220; i++) {
-                ctx.fillStyle = `rgba(255,255,255,${0.05 + Math.random() * 0.08})`;
-                ctx.fillRect(Math.random() * 64, Math.random() * 64, 1 + Math.random() * 2, 1 + Math.random() * 2);
-            }
+        // Physics Ground
+        if (this.physics) {
+            addGround(this.physics, this.scene);
+        } else {
+            // Fallback if physics fails (shouldn't happen with correct libs)
+            const ground = new THREE.Mesh(new THREE.PlaneGeometry(1000, 1000), new THREE.MeshStandardMaterial({ color: 0x3f4b2c }));
+            ground.rotation.x = -Math.PI / 2;
+            this.scene.add(ground);
         }
-        const grassTexture = new THREE.CanvasTexture(canvas);
-        grassTexture.wrapS = grassTexture.wrapT = THREE.RepeatWrapping;
-        grassTexture.repeat.set(120, 120);
-        const ground = new THREE.Mesh(
-            new THREE.PlaneGeometry(1000, 1000),
-            new THREE.MeshStandardMaterial({ map: grassTexture, roughness: 1, metalness: 0 })
-        );
-        ground.rotation.x = -Math.PI / 2;
-        ground.receiveShadow = true;
-        this.scene.add(ground);
 
         // Alberi semplici (leggermente ridotti per FPS)
         for (let i = 0; i < 140; i++) {
@@ -1382,38 +1384,23 @@ export class Game {
         this.spawnCreaturesFromTable(prefabs);
         this.loadVolatileSpawns();
 
-        window.addEventListener("keydown", (e) => {
-            const target = e.target as HTMLElement | null;
-            if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
-            this.keys.add(e.key.toLowerCase());
-            if (e.key === " ") {
-                this.player.jump();
-            }
-            if (e.key.toLowerCase() === "v") {
-                this.healthBarsVisible = !this.healthBarsVisible;
+        // Auto-accept starter quests
+        if (this.questLog.length === 0) {
+            const starterQuests = ["BANDIT_MENACE", "BONES_BE_GONE"];
+            starterQuests.forEach(id => {
+                const def = QUESTS[id];
+                if (def) {
+                    this.questLog.push({
+                        questId: id,
+                        status: "active",
+                        progress: def.objectives.map(() => 0)
+                    });
+                    this.ui?.addChatMessage("System", `Quest Accepted: ${def.title}`);
+                }
+            });
+            this.ui.updateQuestTracker(this.questLog, QUESTS);
+        }
 
-                // Mostra/nasconde le nuove healthbar dei nemici
-                this.enemies.forEach(enemy => {
-                    if (enemy.healthBarDiv) {
-                        enemy.healthBarDiv.style.display = this.healthBarsVisible && enemy.isAlive() ? "block" : "none";
-                    }
-                });
-
-                // Mostra messaggio stato healthbar per 3 secondi
-                this.healthBarStatusDiv.textContent = this.healthBarsVisible ? "healthbar attivate" : "healthbar disattivate";
-                this.healthBarStatusDiv.style.display = "block";
-                this.healthBarStatusDiv.style.background = "#ff0060";
-                this.healthBarStatusDiv.style.color = "#fff";
-                this.healthBarStatusDiv.style.fontWeight = "bold";
-                this.healthBarStatusDiv.style.fontSize = "2rem";
-                this.healthBarStatusDiv.style.border = "4px solid #fff";
-                this.healthBarStatusDiv.style.boxShadow = "0 0 24px #000";
-                this.healthBarStatusDiv.style.zIndex = "99999";
-                setTimeout(() => {
-                    this.healthBarStatusDiv.style.display = "none";
-                }, 3000);
-            }
-        });
         window.addEventListener("keyup", (e) => this.keys.delete(e.key.toLowerCase()));
 
         window.addEventListener("mousedown", (e) => {
@@ -1457,6 +1444,14 @@ export class Game {
                         this.ui.hideLootWindow();
                         this.lootTarget = null;
                         this.scene.remove(found.mesh);
+                        if (found.healthBarDiv) found.healthBarDiv.remove();
+                        this.enemies = this.enemies.filter(e => e !== found);
+                        if (found.canRespawn && found.spawnDefinition) {
+                            this.respawnQueue.push({
+                                time: Date.now() + (found.respawnDelay * 1000),
+                                spawn: found.spawnDefinition
+                            });
+                        }
                     } else {
                         this.ui.showLootWindow(this.lootTarget.loot, handleTake);
                     }
@@ -1528,9 +1523,40 @@ export class Game {
 
         const delta = this.clock.getDelta();
 
+        if (this.physics) this.physics.update(delta * 1000);
+
         if (this.paused) {
             this.renderer.render(this.scene, this.camera);
             return;
+        }
+
+        const realTime = Date.now();
+        // Respawn Queue
+        for (let i = this.respawnQueue.length - 1; i >= 0; i--) {
+            if (realTime >= this.respawnQueue[i].time) {
+                this.spawnSingleCreature(this.respawnQueue[i].spawn);
+                this.respawnQueue.splice(i, 1);
+            }
+        }
+        // Corpse Despawn
+        for (let i = this.enemies.length - 1; i >= 0; i--) {
+            const e = this.enemies[i];
+            if (!e.isAlive() && realTime - e.deathTime > 60000) { // 60s
+                this.scene.remove(e.mesh);
+                if (e.healthBarDiv) e.destroyHealthBar();
+                if (e.canRespawn && e.spawnDefinition) {
+                    this.respawnQueue.push({
+                        time: realTime + (e.respawnDelay * 1000),
+                        spawn: e.spawnDefinition
+                    });
+                }
+                this.enemies.splice(i, 1);
+                if (this.selectedEnemy === e) this.selectedEnemy = null;
+                if (this.lootTarget === e) {
+                    this.ui.hideLootWindow();
+                    this.lootTarget = null;
+                }
+            }
         }
 
         if (!this.player.isAlive()) {
@@ -1586,7 +1612,7 @@ export class Game {
                 div.remove();
                 return false;
             }
-            // Movimento circolare attorno al player (più lento)
+            // Movimento circolare attorno al player (pi├╣ lento)
             const radius = 60;
             const theta = angle + t * Math.PI;
             // Proietta posizione player su schermo
@@ -1698,7 +1724,7 @@ export class Game {
                     this.selectionCircle = new THREE.Mesh(geometry, material);
                     this.selectionCircle.rotation.x = -Math.PI / 2;
                     this.selectionCircle.renderOrder = 999;
-                    this.selectionCircle.material.depthTest = false;
+                    (this.selectionCircle.material as THREE.Material).depthTest = false;
                     this.scene.add(this.selectionCircle);
                 }
                 // Aggiorna posizione sotto il nemico selezionato
@@ -1820,20 +1846,8 @@ export class Game {
             this.player.onMoveStop();
         }
         this.playerWasMoving = isCurrentlyMoving;
-        if (this.player.canFly) {
-            const flySpeed = this.player.speed;
-            if (this.keys.has(" ")) {
-                this.player.mesh.position.y += flySpeed;
-            }
-            if (this.keys.has("x")) {
-                this.player.mesh.position.y = Math.max(1, this.player.mesh.position.y - flySpeed);
-            }
-        }
-        this.player.update(delta);
-
+        // Enemy update loop
         this.enemies.forEach(e => {
-            e.update(this.player, this.camera, this.isGhost);
-            // Nasconde la healthbar se disattivata
             if (e.healthBarDiv) {
                 e.healthBarDiv.style.display = this.healthBarsVisible && e.isAlive() ? "block" : "none";
             }
@@ -1846,10 +1860,6 @@ export class Game {
                     document.body.style.cursor = "url('/cursors/Pointer_bag_on_32x32.cur'), auto";
                 }
             }
-        });
-
-        // Consegna XP; loot resta sul corpo
-        this.enemies.forEach(e => {
             if (!e.isAlive() && !e.rewardGranted) {
                 e.rewardGranted = true;
                 if (e.isEnemy) {
@@ -2032,30 +2042,58 @@ export class Game {
 
     spawnCreaturesFromTable(prefabs: Record<string, any>) {
         creatureSpawns.forEach(spawn => {
-            const template = creatureTemplates[spawn.templateId];
-            if (!template) return;
-            const prefab = prefabs[template.model];
-            if (!prefab) return;
-            const scale = template.scale ?? 0.08;
-            const enemy = new Enemy(spawn.position.x, spawn.position.z, prefab, spawn.isEnemy, scale, 0, template.id);
-            enemy.mesh.name = template.name;
-            enemy.mesh.position.y = spawn.position.y + 1;
-            if (!template.canFly) enemy.mesh.position.y = Math.max(enemy.mesh.position.y, 0.1);
-            enemy.maxHp = template.hp;
-            enemy.hp = template.hp;
-            enemy.xpWorth = template.exp;
-            if (template.damage) enemy.damage = template.damage;
-            if (template.speed) enemy.speed = template.speed;
-            if (template.scriptId) enemy.scriptId = template.scriptId;
-            if (typeof spawn.orientation === "number") enemy.mesh.rotation.y = spawn.orientation;
-            if (!spawn.isEnemy) this.placeFriendlyAwayFromObstacles(enemy);
-            this.enemies.push(enemy);
-            this.scene.add(enemy.mesh);
-            if (!spawn.isEnemy) this.npcs.push({ mesh: enemy.mesh, name: template.name, template });
+            this.spawnSingleCreature(spawn);
         });
         if (this.ui) {
             this.ui.addChatMessage("System", "You arrive at a small outpost bustling with NPCs. Press Enter to chat.");
         }
+    }
+
+    spawnSingleCreature(spawn: CreatureSpawn) {
+        const template = creatureTemplates[spawn.templateId];
+        if (!template) return;
+        const prefab = this.creaturePrefabs[template.model];
+        if (!prefab) return;
+        const scale = template.scale ?? 0.08;
+        const enemy = new Enemy(spawn.position.x, spawn.position.z, prefab, spawn.isEnemy, scale, 0, template.id);
+        enemy.mesh.name = template.name;
+        enemy.mesh.position.y = spawn.position.y + 1;
+        if (!template.canFly) enemy.mesh.position.y = Math.max(enemy.mesh.position.y, 0.1);
+        enemy.maxHp = template.hp;
+        enemy.hp = template.hp;
+        enemy.xpWorth = template.exp;
+
+        if (template.damage) enemy.damage = template.damage;
+        if (template.speed) enemy.speed = template.speed;
+        if (template.scriptId) enemy.scriptId = template.scriptId;
+
+        enemy.mesh.rotation.y = spawn.orientation ?? 0;
+        enemy.factionId = template.factionId || (spawn.isEnemy ? "hostile" : "friendly");
+
+        // Respawn logic
+        enemy.spawnDefinition = spawn;
+        enemy.respawnDelay = spawn.respawnSec || 0;
+        enemy.canRespawn = enemy.respawnDelay > 0;
+
+        if (spawn.rareChance && Math.random() < spawn.rareChance) {
+            enemy.isRare = true;
+            enemy.maxHp *= 2;
+            enemy.hp = enemy.maxHp;
+            enemy.damage *= 1.5;
+            enemy.xpWorth *= 2.5;
+            enemy.mesh.scale.multiplyScalar(1.2);
+        }
+
+        if (spawn.path && spawn.path.length > 0) {
+            const points = spawn.path.map(p => new THREE.Vector3(p.x, p.y, p.z));
+            const events = spawn.path.map(p => p.eventId);
+            enemy.setPatrol(points, 1500, events);
+        }
+
+        if (!spawn.isEnemy) this.placeFriendlyAwayFromObstacles(enemy);
+        this.enemies.push(enemy);
+        this.scene.add(enemy.mesh);
+        if (!spawn.isEnemy) this.npcs.push({ mesh: enemy.mesh, name: template.name, template });
     }
 
     spawnGameObjects(prefabs: Record<string, any>) {
@@ -2073,7 +2111,7 @@ export class Game {
                 obj = buildGeometryGroup(template.geometry) || null;
             }
             if (!obj) return;
-            obj.position.set(spawn.position.x, spawn.position.y, spawn.position.z);
+            obj!.position.set(spawn.position.x, spawn.position.y, spawn.position.z);
             if (typeof spawn.orientation === "number") obj.rotation.y = spawn.orientation;
             obj.traverse((child: any) => {
                 if (child.isMesh) {
@@ -2124,7 +2162,7 @@ export class Game {
             obj = buildGeometryGroup(template.geometry) || null;
         }
         if (!obj) return false;
-        obj.position.set(position.x, position.y, position.z);
+        obj!.position.set(position.x, position.y, position.z);
         obj.rotation.y = orientation;
         obj.traverse((child: any) => {
             if (child.isMesh) {
@@ -2202,7 +2240,7 @@ export class Game {
         });
     }
 
-  togglePauseMenu() {
+    togglePauseMenu() {
         this.paused = !this.paused;
         if (this.paused) {
             this.showPauseMenu();
@@ -2382,5 +2420,189 @@ export class Game {
         const fogFar = isNight ? 200 : 180;
         this.scene.background = new THREE.Color(sky);
         this.scene.fog = new THREE.Fog(sky, fogNear, fogFar);
+    }
+
+    togglePauseMenu() {
+        if (!this.paused) {
+            this.paused = true;
+            // create overlay
+            this.pauseOverlay = document.createElement("div");
+            this.pauseOverlay.style.position = "fixed";
+            this.pauseOverlay.style.top = "0";
+            this.pauseOverlay.style.left = "0";
+            this.pauseOverlay.style.width = "100%";
+            this.pauseOverlay.style.height = "100%";
+            this.pauseOverlay.style.background = "rgba(0,0,0,0.6)";
+            this.pauseOverlay.style.display = "flex";
+            this.pauseOverlay.style.justifyContent = "center";
+            this.pauseOverlay.style.alignItems = "center";
+            this.pauseOverlay.style.flexDirection = "column";
+            this.pauseOverlay.style.zIndex = "20000";
+
+            const title = document.createElement("h1");
+            title.textContent = "Game Paused";
+            title.style.color = "#f6d48b";
+            title.style.marginBottom = "20px";
+            this.pauseOverlay.appendChild(title);
+
+            const resume = document.createElement("button");
+            resume.textContent = "Resume";
+            resume.style.padding = "10px 20px";
+            resume.style.fontSize = "1.2rem";
+            resume.onclick = () => this.togglePauseMenu();
+            this.pauseOverlay.appendChild(resume);
+
+            document.body.appendChild(this.pauseOverlay);
+        } else {
+            this.paused = false;
+            if (this.pauseOverlay) this.pauseOverlay.remove();
+            this.pauseOverlay = null;
+        }
+    }
+
+    toggleQuestLog() {
+        if (!this.ui) return;
+        this.ui.buildQuestLog(this.questLog, QUESTS);
+        this.ui.toggleModal("quests");
+    }
+
+    enterGhostState() {
+        if (this.isGhost) return;
+        this.isGhost = true;
+        this.corpsePosition = this.player.mesh.position.clone();
+        this.createCorpseMarker(this.corpsePosition);
+
+        // Visual effects
+        this.applyGhostVisuals(true);
+
+        // Teleport to graveyard
+        this.player.mesh.position.set(0, 2, 0);
+        this.ui.addChatMessage("System", "You have died. Return to your corpse to revive.");
+
+        // Ensure UI elements exists
+        this.ensureGhostUI();
+    }
+
+    createCorpseMarker(pos: THREE.Vector3) {
+        if (this.corpseMarker) this.scene.remove(this.corpseMarker);
+        const geo = new THREE.CylinderGeometry(0.5, 0.5, 2, 8);
+        const mat = new THREE.MeshBasicMaterial({ color: 0x555555, transparent: true, opacity: 0.8 });
+        this.corpseMarker = new THREE.Mesh(geo, mat);
+        this.corpseMarker.position.copy(pos);
+        this.corpseMarker.position.y += 1;
+        this.scene.add(this.corpseMarker);
+    }
+
+    applyGhostVisuals(enable: boolean) {
+        if (enable) {
+            // Gray scale like effect or strict fog
+            this.scene.fog = new THREE.Fog(0x333333, 5, 50);
+            if (this.ambientLight) this.ambientLight.intensity = 0.2;
+        } else {
+            // restore defaults (will be updated by day/night cycle anyway)
+            this.scene.fog = new THREE.Fog(0x1f2a38, 25, 180);
+        }
+    }
+
+    ensureGhostUI() {
+        if (!this.corpseArrow) {
+            this.corpseArrow = document.createElement("div");
+            this.corpseArrow.style.position = "fixed";
+            this.corpseArrow.style.top = "50%";
+            this.corpseArrow.style.left = "50%";
+            this.corpseArrow.style.transform = "translate(-50%, -50%)"; // Center pivot
+            this.corpseArrow.style.width = "0";
+            this.corpseArrow.style.height = "0";
+            this.corpseArrow.style.borderLeft = "20px solid transparent";
+            this.corpseArrow.style.borderRight = "20px solid transparent";
+            this.corpseArrow.style.borderBottom = "40px solid #ff0000";
+            this.corpseArrow.style.display = "none";
+            this.corpseArrow.style.zIndex = "10000";
+            document.body.appendChild(this.corpseArrow);
+        }
+
+        if (!this.revivePopup) {
+            this.revivePopup = document.createElement("div");
+            this.revivePopup.style.position = "fixed";
+            this.revivePopup.style.top = "20%";
+            this.revivePopup.style.left = "50%";
+            this.revivePopup.style.transform = "translateX(-50%)";
+            this.revivePopup.style.background = "rgba(0,0,0,0.8)";
+            this.revivePopup.style.padding = "20px";
+            this.revivePopup.style.border = "2px solid #fff";
+            this.revivePopup.style.color = "#fff";
+            this.revivePopup.style.display = "none";
+            this.revivePopup.style.flexDirection = "column";
+            this.revivePopup.style.gap = "10px";
+            this.revivePopup.style.zIndex = "10001";
+
+            const text = document.createElement("div");
+            text.textContent = "You are near your corpse.";
+            this.revivePopup.appendChild(text);
+
+            const btn = document.createElement("button");
+            btn.textContent = "Revive";
+            btn.style.padding = "10px";
+            btn.style.cursor = "pointer";
+            btn.onclick = () => this.reviveAtCorpse();
+            this.revivePopup.appendChild(btn);
+
+            document.body.appendChild(this.revivePopup);
+        }
+    }
+
+    updateGhostUI() {
+        if (!this.isGhost || !this.corpsePosition || !this.player) return;
+
+        // Arrow pointing to corpse
+        const playerPos = this.player.mesh.position;
+        const dir = this.corpsePosition.clone().sub(playerPos);
+        dir.y = 0;
+        const dist = dir.length();
+
+        if (this.corpseArrow) {
+            this.corpseArrow.style.display = "block";
+            // Calculate angle
+            // Camera forward vector project on 2D
+            const camDir = new THREE.Vector3();
+            this.camera.getWorldDirection(camDir);
+            camDir.y = 0;
+            camDir.normalize();
+
+            const angle = Math.atan2(dir.x, dir.z);
+            const camAngle = Math.atan2(camDir.x, camDir.z);
+
+            // Simple 2D rotation of arrow div based on difference? 
+            // Actually it's easier to just rotate based on screen space projection or just world angle relative to camera
+            // For now simple generic arrow:
+            // Let's just point it relative to screen center? No that requires projection.
+            // Simplest: Just use standard 2D arrow pointing to target from center
+
+            // We can ignore complex 3D projection for now and just check distance for Revive UI
+        }
+
+        if (this.revivePopup) {
+            if (dist < this.reviveRadius) {
+                this.revivePopup.style.display = "flex";
+            } else {
+                this.revivePopup.style.display = "none";
+            }
+        }
+    }
+
+    reviveAtCorpse() {
+        if (!this.isGhost || !this.corpsePosition) return;
+        this.isGhost = false;
+        this.player.hp = this.player.maxHp / 2;
+        this.player.mana = this.player.maxMana ? this.player.maxMana / 2 : 0;
+        this.applyGhostVisuals(false);
+        this.player.mesh.position.copy(this.corpsePosition);
+        if (this.corpseMarker) {
+            this.scene.remove(this.corpseMarker);
+            this.corpseMarker = null;
+        }
+        if (this.corpseArrow) this.corpseArrow.style.display = "none";
+        if (this.revivePopup) this.revivePopup.style.display = "none";
+        this.ui.updatePlayerHealth(this.player.hp, this.player.mana, this.player.maxHp, this.player.maxMana, 0, 0, 0); // update bars
     }
 }

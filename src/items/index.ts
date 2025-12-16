@@ -17,7 +17,7 @@ export const ITEM_REGISTRY: Record<string, Item> = {
         slot: "hands",
         stats: { intellect: 1, stamina: 1 },
         classTags: ["mage"],
-        rarity: "common",
+        rarity: "uncommon",
     },
     training_shield: {
         id: "training_shield",
@@ -27,6 +27,7 @@ export const ITEM_REGISTRY: Record<string, Item> = {
         stats: { stamina: 3 },
         classTags: ["warrior"],
         rarity: "rare",
+        bindOnPickup: true,
     },
     rogue_daggers: {
         id: "rogue_daggers",
@@ -45,6 +46,7 @@ export const ITEM_REGISTRY: Record<string, Item> = {
         stats: { intellect: 3 },
         classTags: ["mage"],
         rarity: "rare",
+        bindOnPickup: true,
     },
   minor_health_potion: {
     id: "minor_health_potion",
@@ -54,6 +56,23 @@ export const ITEM_REGISTRY: Record<string, Item> = {
     use: ({ player }) => {
       player.hp = Math.min(player.maxHp, player.hp + 30);
     },
+  },
+  arcane_ring: {
+    id: "arcane_ring",
+    name: "Ring of Sparks",
+    description: "Faintly humming with arcane energy.",
+    slot: "finger",
+    stats: { intellect: 2, crit: 1 },
+    rarity: "epic",
+    bindOnPickup: true,
+  },
+  hunter_trinket: {
+    id: "hunter_trinket",
+    name: "Lucky Fang Charm",
+    description: "Said to ward off misfortune.",
+    slot: "trinket",
+    stats: { agility: 2, stamina: 2 },
+    rarity: "uncommon",
   },
 };
 

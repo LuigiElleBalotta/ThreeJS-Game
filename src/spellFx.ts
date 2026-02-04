@@ -9,6 +9,7 @@ import {
   ParticleEmitter,
   ParticleSystem,
   PointEmitter,
+  SphereEmitter,
   RenderMode,
   Vector3,
   Vector4,
@@ -383,6 +384,50 @@ export class SpellFX {
       });
     }
     return null;
+  }
+
+  spawnBurnAura(target: THREE.Object3D, durationMs: number = 1200) {
+    this.ensureRenderer();
+    const system = new ParticleSystem({
+      autoDestroy: true,
+      looping: true,
+      prewarm: false,
+      duration: Math.max(0.4, durationMs / 1000),
+      shape: new SphereEmitter({ radius: 0.7, thickness: 0.8 }),
+      startLife: new IntervalValue(0.45, 0.8),
+      startSpeed: new IntervalValue(0.15, 0.45),
+      startRotation: new ConstantValue(0),
+      startSize: new IntervalValue(0.2, 0.38),
+      startColor: new ConstantColor(new Vector4(1, 1, 1, 1)),
+      emissionOverTime: new ConstantValue(36),
+      emissionOverDistance: new ConstantValue(0),
+      renderMode: RenderMode.BillBoard,
+      material: new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthTest: false,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+      renderOrder: 10,
+      behaviors: [new ColorOverLife(this.makeGradient(0xff6b1a, 0xfff0a0))],
+      worldSpace: true,
+    });
+
+    const emitter = new ParticleEmitter(system);
+    emitter.position.set(0, 1.1, 0);
+    target.add(emitter);
+    this.renderer?.addSystem(system);
+    const cleanup = () => {
+      this.renderer?.deleteSystem(emitter.system);
+      emitter.removeFromParent();
+      emitter.system.removeAllEventListeners("destroy");
+    };
+    emitter.system.addEventListener("destroy", cleanup);
+    system.play();
+    setTimeout(() => system.endEmit(), durationMs);
+    return emitter;
   }
 
   endEmitter(emitter: ParticleEmitter | null | undefined) {

@@ -171,8 +171,10 @@ export class Enemy {
         if (this.hp <= 0) {
             this.alive = false;
             this.deathTime = Date.now();
+            window.dispatchEvent(new CustomEvent("enemyKilled", { detail: { enemy: this } }));
         }
     }
+
 
     getBoundingBox(pos?: THREE.Vector3) {
         // Calcola la bounding box reale del modello enemy
@@ -375,6 +377,7 @@ export class Enemy {
         const remaining = Math.max(0, (end - now) / 1000);
         return { pct, remaining, spell };
     }
+
 }
 
 function enemySpellDamage(spell: any, enemy: Enemy) {

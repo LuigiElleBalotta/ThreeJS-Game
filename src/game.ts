@@ -631,6 +631,11 @@ export class Game {
             }
         });
 
+        window.addEventListener("enemyKilled", (e: any) => {
+            const enemy = e.detail?.enemy as Enemy | undefined;
+            if (enemy) this.handleEnemyKillCredit(enemy);
+        });
+
         // Mobile controller
         if (isMobile) {
             // --- CONTROLLER MOBILE CUSTOM ---
@@ -1155,6 +1160,9 @@ export class Game {
         if (dmg > 0) {
             this.showFloatingDamage(target, dmg, startTime);
             this.player.onDealDamage(dmg, target, config);
+            if (isMageSpell && config.id === "fire_blast") {
+                this.fx.spawnBurnAura(target.mesh, 1200);
+            }
         }
         if (isMageSpell) {
             const impactPos = target.mesh.position.clone();
@@ -1173,6 +1181,36 @@ export class Game {
 
     showFloatingDamage(target: Enemy, dmg: number, startTime: number) {
         this.fx.showFloatingDamage(target, dmg, startTime, this.camera);
+    }
+
+    handleEnemyKillCredit(enemy: Enemy) {
+        if (!enemy.isEnemy || !enemy.templateId) return;
+        let updated = false;
+        this.questLog.forEach(q => {
+            if (q.status !== "active") return;
+            const def = QUESTS[q.questId];
+            if (!def) return;
+            def.objectives.forEach((obj, idx) => {
+                if (obj.type !== "kill") return;
+                if (obj.targetId !== enemy.templateId) return;
+                const current = q.progress[idx] ?? 0;
+                if (current >= obj.count) return;
+                q.progress[idx] = current + 1;
+                updated = true;
+            });
+            const completed = def.objectives.every((obj, idx) => {
+                if (obj.type === "kill") return (q.progress[idx] ?? 0) >= obj.count;
+                if (obj.type === "escort") return (q.progress[idx] ?? 0) >= 1;
+                return false;
+            });
+            if (completed && q.status === "active") {
+                q.status = "completed";
+                this.ui?.addChatMessage("System", `Quest Completed: ${def.title}`);
+            }
+        });
+        if (updated) {
+            this.ui.updateQuestTracker(this.questLog, QUESTS);
+        }
     }
 
     tryOpenGossip() {

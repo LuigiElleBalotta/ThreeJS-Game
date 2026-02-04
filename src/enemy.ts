@@ -133,6 +133,17 @@ export class Enemy {
             zombie.position.set(0, modelYOffset, 0);
             this.mesh.clear();
             this.mesh.add(zombie);
+
+            if (prefab.animations && prefab.animations.length > 0) {
+                this.mixer = new THREE.AnimationMixer(zombie);
+                for (const clip of prefab.animations) {
+                    const action = this.mixer.clipAction(clip);
+                    this.actions[clip.name] = action;
+                    if (clip.name.toLowerCase().includes("run") || clip.name.toLowerCase().includes("walk") || clip.name.toLowerCase().includes("idle")) {
+                        action.play();
+                    }
+                }
+            }
         }
 
         // Calcola la posizione della testa solo una volta
@@ -234,9 +245,9 @@ export class Enemy {
         if (this.castBarDiv) this.castBarDiv.remove();
     }
 
-    update(player: Player, camera?: THREE.Camera, playerIsGhost: boolean = false) {
+    update(player: Player, camera?: THREE.Camera, playerIsGhost: boolean = false, delta: number = 1 / 60) {
         if (this.mixer) {
-            this.mixer.update(1 / 60);
+            this.mixer.update(delta);
         }
 
         if (!this.alive) {

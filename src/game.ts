@@ -20,6 +20,7 @@ import { createPhysics, addGround } from "./physics";
 import { QUESTS, QuestDefinition, QuestProgressState } from "./quests";
 import { waypointScripts } from "./waypointScripts";
 import { CreatureSpawn } from "./creatures";
+import type { ParticleEmitter } from "three.quarks";
 
 export class Game {
     scene: THREE.Scene;
@@ -61,7 +62,7 @@ export class Game {
     globalCooldown: number = 650;
     lastGlobalCast: number = 0;
     spellSlots: (string | null)[] = Array(12).fill(null);
-    projectiles: { mesh: THREE.Mesh, target: Enemy, damage: number, isCrit: boolean, speed: number }[] = [];
+    projectiles: { mesh: THREE.Mesh, target: Enemy, damage: number, isCrit: boolean, speed: number, trail?: ParticleEmitter | null }[] = [];
     casting: { spell: any; slot: number; target: Enemy | null; start: number; end: number } | null = null;
     fx: SpellFX = new SpellFX();
     isGhost: boolean = false;
@@ -107,6 +108,7 @@ export class Game {
         this.scene = new THREE.Scene();
         this.scene.background = new THREE.Color(0x1d2433);
         this.scene.fog = new THREE.Fog(0x1f2a38, 25, 180);
+        this.fx.init(this.scene);
 
         this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
         this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -248,10 +250,13 @@ export class Game {
         this.setupLoginFlow();
         this.setupChatCommands();
 
-        // Gestione hotkey spellbar (1-0,-,click)
+        // Gestione hotkey spellbar (1-0,-,click) e movimento
         window.addEventListener("keydown", (e) => {
             const target = e.target as HTMLElement | null;
             if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
+
+            this.keys.add(e.key.toLowerCase());
+
             const key = e.key;
             if (key === "1") this.castSpell(0);
             if (key === "2") this.castSpell(1);
@@ -265,6 +270,9 @@ export class Game {
             if (key === "0") this.castSpell(9);
             if (key === "-") this.castSpell(10);
             if (key.toLowerCase() === "l") this.toggleQuestLog();
+            if (key === " ") {
+                if (this.player) this.player.jump();
+            }
             if (key === "Escape") {
                 if (this.selectedEnemy) {
                     this.selectedEnemy = null;
@@ -273,6 +281,98 @@ export class Game {
                 }
             }
         });
+
+        window.addEventListener("keyup", (e) => {
+            this.keys.delete(e.key.toLowerCase());
+        });
+
+        window.addEventListener("mousedown", (e) => {
+            if (e.button === 2) this.rightMouseDown = true;
+            if (e.button === 0) {
+                this.mouseLeftDown = true;
+                this.tryOpenGossip();
+
+                // Selezione nemico con click
+                const raycaster = new THREE.Raycaster();
+                raycaster.setFromCamera(this.mousePos, this.camera);
+                let found: Enemy | null = null;
+                for (const enemy of this.enemies) {
+                    if (!enemy.isAlive() || !enemy.isEnemy) continue;
+                    const intersects = raycaster.intersectObject(enemy.mesh, true);
+                    if (intersects.length > 0) {
+                        found = enemy;
+                        break;
+                    }
+                }
+                this.selectedEnemy = found;
+            }
+
+            // Right click loot on dead enemies
+            if (e.button === 2) {
+                const raycaster = new THREE.Raycaster();
+                raycaster.setFromCamera(this.mousePos, this.camera);
+                let found: Enemy | null = null;
+                for (const enemy of this.enemies) {
+                    if (!enemy.isEnemy) continue;
+                    const intersects = raycaster.intersectObject(enemy.mesh, true);
+                    if (intersects.length > 0) {
+                        found = enemy;
+                        break;
+                    }
+                }
+                if (found && !found.isAlive()) {
+                    // despawn if empty loot
+                    if (!found.loot || found.loot.length === 0) {
+                        this.scene.remove(found.mesh);
+                        return;
+                    }
+                    this.lootTarget = found;
+                    const handleTake = (itemId: string) => {
+                        if (!this.lootTarget) return;
+                        const idx = this.lootTarget.loot.indexOf(itemId);
+                        if (idx >= 0) this.lootTarget.loot.splice(idx, 1);
+                        if (itemId.startsWith("gold_")) {
+                            const amt = parseInt(itemId.replace("gold_", ""), 10) || 0;
+                            this.gold += amt;
+                        } else {
+                            this.inventory.push(itemId);
+                        }
+                        this.ui.populateBags(this.inventory.map(id => getItemById(id)), this.gold);
+                        if (this.lootTarget.loot.length === 0) {
+                            this.ui.hideLootWindow();
+                            this.lootTarget = null;
+                            this.scene.remove(found.mesh);
+                            if (found.healthBarDiv) found.healthBarDiv.remove();
+                            this.enemies = this.enemies.filter(e => e !== found);
+                            if (found.canRespawn && found.spawnDefinition) {
+                                this.respawnQueue.push({
+                                    time: Date.now() + (found.respawnDelay * 1000),
+                                    spawn: found.spawnDefinition
+                                });
+                            }
+                        } else {
+                            this.ui.showLootWindow(this.lootTarget.loot, handleTake);
+                        }
+                    };
+                    this.ui.showLootWindow(found.loot, handleTake);
+                }
+            }
+        });
+
+        window.addEventListener("mouseup", (e) => {
+            if (e.button === 2) this.rightMouseDown = false;
+            if (e.button === 0) this.mouseLeftDown = false;
+        });
+
+        window.addEventListener("contextmenu", e => e.preventDefault());
+
+        window.addEventListener("mousemove", (event) => {
+            const rect = this.renderer.domElement.getBoundingClientRect();
+            this.mousePos.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            this.mousePos.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+        });
+
+        window.addEventListener("playerAttack", () => this.handleAttack());
 
         // Talenti
         window.addEventListener("learnTalent", (e: any) => {
@@ -522,23 +622,6 @@ export class Game {
             div.style.zIndex = "100000";
             document.body.appendChild(div);
             setTimeout(() => div.remove(), 1100);
-        });
-
-        // Selezione nemico con click
-        window.addEventListener("mousedown", (event) => {
-            if (event.button !== 0) return; // solo click sinistro
-            const raycaster = new THREE.Raycaster();
-            raycaster.setFromCamera(this.mousePos, this.camera);
-            let found: Enemy | null = null;
-            for (const enemy of this.enemies) {
-                if (!enemy.isAlive() || !enemy.isEnemy) continue;
-                const intersects = raycaster.intersectObject(enemy.mesh, true);
-                if (intersects.length > 0) {
-                    found = enemy;
-                    break;
-                }
-            }
-            this.selectedEnemy = found;
         });
 
         // Selezione nemico tramite healthbar (click/tap)
@@ -1038,6 +1121,7 @@ export class Game {
         }
 
         const inCombatBefore = (now - this.lastCombatTime < 5000);
+        const isMageSpell = this.player.classId === "mage" && config.classTags.includes("mage");
         // Cast handling
         const beginCast = () => {
             if (slots && slots[slot]) showCooldownOverlay(slots[slot], config.cooldown);
@@ -1046,6 +1130,11 @@ export class Game {
             this.player.mana -= config.cost;
             this.lastCombatTime = performance.now();
             this.player.onSpellCast(config, { inCombat: inCombatBefore });
+            if (isMageSpell) {
+                const castPos = this.player.mesh.position.clone();
+                castPos.y += 1.4;
+                this.fx.spawnMageCast(config.school, castPos);
+            }
         };
 
         if (config.castTime && config.castTime > 0) {
@@ -1062,15 +1151,22 @@ export class Game {
     resolveSpellDamage(config: any, target: Enemy | null, startTime: number) {
         if (!target || !target.isAlive()) return;
         const dmg = config.execute({ player: this.player, game: this, target });
+        const isMageSpell = this.player.classId === "mage" && config.classTags.includes("mage");
         if (dmg > 0) {
             this.showFloatingDamage(target, dmg, startTime);
             this.player.onDealDamage(dmg, target, config);
+        }
+        if (isMageSpell) {
+            const impactPos = target.mesh.position.clone();
+            impactPos.y += 1.2;
+            this.fx.spawnMageImpact(config.school, impactPos);
         }
         if (config.kind === "ranged") {
             const origin = this.player.mesh.position.clone();
             origin.y += 1.4;
             const bolt = this.fx.spawnProjectile(config.projectileColor, origin, target, this.scene);
-            this.projectiles.push({ mesh: bolt, target, damage: 0, isCrit: false, speed: 0.3 });
+            const trail = isMageSpell ? this.fx.spawnMageProjectileTrail(config.school, bolt) : null;
+            this.projectiles.push({ mesh: bolt, target, damage: 0, isCrit: false, speed: 0.3, trail });
         }
         this.player.onSpellImpact(config, { target, damage: dmg });
     }
@@ -1401,83 +1497,8 @@ export class Game {
             this.ui.updateQuestTracker(this.questLog, QUESTS);
         }
 
-        window.addEventListener("keyup", (e) => this.keys.delete(e.key.toLowerCase()));
-
-        window.addEventListener("mousedown", (e) => {
-            if (e.button === 2) this.rightMouseDown = true;
-            if (e.button === 0) this.mouseLeftDown = true;
-            if (e.button === 0) this.tryOpenGossip();
-        });
-        // Right click loot on dead enemies
-        window.addEventListener("mousedown", (event) => {
-            if (event.button !== 2) return;
-            const raycaster = new THREE.Raycaster();
-            raycaster.setFromCamera(this.mousePos, this.camera);
-            let found: Enemy | null = null;
-            for (const enemy of this.enemies) {
-                if (!enemy.isEnemy) continue;
-                const intersects = raycaster.intersectObject(enemy.mesh, true);
-                if (intersects.length > 0) {
-                    found = enemy;
-                    break;
-                }
-            }
-            if (found && !found.isAlive()) {
-                // despawn if empty loot
-                if (!found.loot || found.loot.length === 0) {
-                    this.scene.remove(found.mesh);
-                    return;
-                }
-                this.lootTarget = found;
-                const handleTake = (itemId: string) => {
-                    if (!this.lootTarget) return;
-                    const idx = this.lootTarget.loot.indexOf(itemId);
-                    if (idx >= 0) this.lootTarget.loot.splice(idx, 1);
-                    if (itemId.startsWith("gold_")) {
-                        const amt = parseInt(itemId.replace("gold_", ""), 10) || 0;
-                        this.gold += amt;
-                    } else {
-                        this.inventory.push(itemId);
-                    }
-                    this.ui.populateBags(this.inventory.map(id => getItemById(id)), this.gold);
-                    if (this.lootTarget.loot.length === 0) {
-                        this.ui.hideLootWindow();
-                        this.lootTarget = null;
-                        this.scene.remove(found.mesh);
-                        if (found.healthBarDiv) found.healthBarDiv.remove();
-                        this.enemies = this.enemies.filter(e => e !== found);
-                        if (found.canRespawn && found.spawnDefinition) {
-                            this.respawnQueue.push({
-                                time: Date.now() + (found.respawnDelay * 1000),
-                                spawn: found.spawnDefinition
-                            });
-                        }
-                    } else {
-                        this.ui.showLootWindow(this.lootTarget.loot, handleTake);
-                    }
-                };
-                this.ui.showLootWindow(found.loot, handleTake);
-            }
-        });
-        window.addEventListener("mouseup", (e) => {
-            if (e.button === 2) this.rightMouseDown = false;
-            if (e.button === 0) this.mouseLeftDown = false;
-        });
-
-        window.addEventListener("playerAttack", () => this.handleAttack());
-
-        // Disabilita context menu browser su tasto destro
-        window.addEventListener("contextmenu", e => e.preventDefault());
-
         this.loaderDiv.style.display = "none";
         this.animate();
-
-        // Gestione cursore custom: aggiorna anche se la camera si muove
-        window.addEventListener("mousemove", (event) => {
-            const rect = this.renderer.domElement.getBoundingClientRect();
-            this.mousePos.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-            this.mousePos.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-        });
 
         // Imposta cursore di default all'avvio
         document.body.style.cursor = "url('/cursors/Pointer_gauntlet_on_32x32.cur'), auto";
@@ -1529,6 +1550,7 @@ export class Game {
             this.renderer.render(this.scene, this.camera);
             return;
         }
+        this.fx.update(delta);
 
         const realTime = Date.now();
         // Respawn Queue
@@ -1587,6 +1609,7 @@ export class Game {
         // Avanza i proiettili magici
         this.projectiles = this.projectiles.filter(p => {
             if (!p.target || !p.target.isAlive()) {
+                if (p.trail) this.fx.endEmitter(p.trail);
                 this.scene.remove(p.mesh);
                 return false;
             }
@@ -1600,6 +1623,7 @@ export class Game {
                 if (p.damage > 0) {
                     p.target.takeDamage(p.damage);
                 }
+                if (p.trail) this.fx.endEmitter(p.trail);
                 this.scene.remove(p.mesh);
                 return false;
             }
@@ -1846,8 +1870,10 @@ export class Game {
             this.player.onMoveStop();
         }
         this.playerWasMoving = isCurrentlyMoving;
+        this.player.update(delta);
         // Enemy update loop
         this.enemies.forEach(e => {
+            e.update(this.player, this.camera, this.isGhost, delta);
             if (e.healthBarDiv) {
                 e.healthBarDiv.style.display = this.healthBarsVisible && e.isAlive() ? "block" : "none";
             }
@@ -2422,187 +2448,10 @@ export class Game {
         this.scene.fog = new THREE.Fog(sky, fogNear, fogFar);
     }
 
-    togglePauseMenu() {
-        if (!this.paused) {
-            this.paused = true;
-            // create overlay
-            this.pauseOverlay = document.createElement("div");
-            this.pauseOverlay.style.position = "fixed";
-            this.pauseOverlay.style.top = "0";
-            this.pauseOverlay.style.left = "0";
-            this.pauseOverlay.style.width = "100%";
-            this.pauseOverlay.style.height = "100%";
-            this.pauseOverlay.style.background = "rgba(0,0,0,0.6)";
-            this.pauseOverlay.style.display = "flex";
-            this.pauseOverlay.style.justifyContent = "center";
-            this.pauseOverlay.style.alignItems = "center";
-            this.pauseOverlay.style.flexDirection = "column";
-            this.pauseOverlay.style.zIndex = "20000";
-
-            const title = document.createElement("h1");
-            title.textContent = "Game Paused";
-            title.style.color = "#f6d48b";
-            title.style.marginBottom = "20px";
-            this.pauseOverlay.appendChild(title);
-
-            const resume = document.createElement("button");
-            resume.textContent = "Resume";
-            resume.style.padding = "10px 20px";
-            resume.style.fontSize = "1.2rem";
-            resume.onclick = () => this.togglePauseMenu();
-            this.pauseOverlay.appendChild(resume);
-
-            document.body.appendChild(this.pauseOverlay);
-        } else {
-            this.paused = false;
-            if (this.pauseOverlay) this.pauseOverlay.remove();
-            this.pauseOverlay = null;
-        }
-    }
-
     toggleQuestLog() {
         if (!this.ui) return;
         this.ui.buildQuestLog(this.questLog, QUESTS);
         this.ui.toggleModal("quests");
     }
 
-    enterGhostState() {
-        if (this.isGhost) return;
-        this.isGhost = true;
-        this.corpsePosition = this.player.mesh.position.clone();
-        this.createCorpseMarker(this.corpsePosition);
-
-        // Visual effects
-        this.applyGhostVisuals(true);
-
-        // Teleport to graveyard
-        this.player.mesh.position.set(0, 2, 0);
-        this.ui.addChatMessage("System", "You have died. Return to your corpse to revive.");
-
-        // Ensure UI elements exists
-        this.ensureGhostUI();
-    }
-
-    createCorpseMarker(pos: THREE.Vector3) {
-        if (this.corpseMarker) this.scene.remove(this.corpseMarker);
-        const geo = new THREE.CylinderGeometry(0.5, 0.5, 2, 8);
-        const mat = new THREE.MeshBasicMaterial({ color: 0x555555, transparent: true, opacity: 0.8 });
-        this.corpseMarker = new THREE.Mesh(geo, mat);
-        this.corpseMarker.position.copy(pos);
-        this.corpseMarker.position.y += 1;
-        this.scene.add(this.corpseMarker);
-    }
-
-    applyGhostVisuals(enable: boolean) {
-        if (enable) {
-            // Gray scale like effect or strict fog
-            this.scene.fog = new THREE.Fog(0x333333, 5, 50);
-            if (this.ambientLight) this.ambientLight.intensity = 0.2;
-        } else {
-            // restore defaults (will be updated by day/night cycle anyway)
-            this.scene.fog = new THREE.Fog(0x1f2a38, 25, 180);
-        }
-    }
-
-    ensureGhostUI() {
-        if (!this.corpseArrow) {
-            this.corpseArrow = document.createElement("div");
-            this.corpseArrow.style.position = "fixed";
-            this.corpseArrow.style.top = "50%";
-            this.corpseArrow.style.left = "50%";
-            this.corpseArrow.style.transform = "translate(-50%, -50%)"; // Center pivot
-            this.corpseArrow.style.width = "0";
-            this.corpseArrow.style.height = "0";
-            this.corpseArrow.style.borderLeft = "20px solid transparent";
-            this.corpseArrow.style.borderRight = "20px solid transparent";
-            this.corpseArrow.style.borderBottom = "40px solid #ff0000";
-            this.corpseArrow.style.display = "none";
-            this.corpseArrow.style.zIndex = "10000";
-            document.body.appendChild(this.corpseArrow);
-        }
-
-        if (!this.revivePopup) {
-            this.revivePopup = document.createElement("div");
-            this.revivePopup.style.position = "fixed";
-            this.revivePopup.style.top = "20%";
-            this.revivePopup.style.left = "50%";
-            this.revivePopup.style.transform = "translateX(-50%)";
-            this.revivePopup.style.background = "rgba(0,0,0,0.8)";
-            this.revivePopup.style.padding = "20px";
-            this.revivePopup.style.border = "2px solid #fff";
-            this.revivePopup.style.color = "#fff";
-            this.revivePopup.style.display = "none";
-            this.revivePopup.style.flexDirection = "column";
-            this.revivePopup.style.gap = "10px";
-            this.revivePopup.style.zIndex = "10001";
-
-            const text = document.createElement("div");
-            text.textContent = "You are near your corpse.";
-            this.revivePopup.appendChild(text);
-
-            const btn = document.createElement("button");
-            btn.textContent = "Revive";
-            btn.style.padding = "10px";
-            btn.style.cursor = "pointer";
-            btn.onclick = () => this.reviveAtCorpse();
-            this.revivePopup.appendChild(btn);
-
-            document.body.appendChild(this.revivePopup);
-        }
-    }
-
-    updateGhostUI() {
-        if (!this.isGhost || !this.corpsePosition || !this.player) return;
-
-        // Arrow pointing to corpse
-        const playerPos = this.player.mesh.position;
-        const dir = this.corpsePosition.clone().sub(playerPos);
-        dir.y = 0;
-        const dist = dir.length();
-
-        if (this.corpseArrow) {
-            this.corpseArrow.style.display = "block";
-            // Calculate angle
-            // Camera forward vector project on 2D
-            const camDir = new THREE.Vector3();
-            this.camera.getWorldDirection(camDir);
-            camDir.y = 0;
-            camDir.normalize();
-
-            const angle = Math.atan2(dir.x, dir.z);
-            const camAngle = Math.atan2(camDir.x, camDir.z);
-
-            // Simple 2D rotation of arrow div based on difference? 
-            // Actually it's easier to just rotate based on screen space projection or just world angle relative to camera
-            // For now simple generic arrow:
-            // Let's just point it relative to screen center? No that requires projection.
-            // Simplest: Just use standard 2D arrow pointing to target from center
-
-            // We can ignore complex 3D projection for now and just check distance for Revive UI
-        }
-
-        if (this.revivePopup) {
-            if (dist < this.reviveRadius) {
-                this.revivePopup.style.display = "flex";
-            } else {
-                this.revivePopup.style.display = "none";
-            }
-        }
-    }
-
-    reviveAtCorpse() {
-        if (!this.isGhost || !this.corpsePosition) return;
-        this.isGhost = false;
-        this.player.hp = this.player.maxHp / 2;
-        this.player.mana = this.player.maxMana ? this.player.maxMana / 2 : 0;
-        this.applyGhostVisuals(false);
-        this.player.mesh.position.copy(this.corpsePosition);
-        if (this.corpseMarker) {
-            this.scene.remove(this.corpseMarker);
-            this.corpseMarker = null;
-        }
-        if (this.corpseArrow) this.corpseArrow.style.display = "none";
-        if (this.revivePopup) this.revivePopup.style.display = "none";
-        this.ui.updatePlayerHealth(this.player.hp, this.player.mana, this.player.maxHp, this.player.maxMana, 0, 0, 0); // update bars
-    }
 }

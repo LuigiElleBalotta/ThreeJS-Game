@@ -1,10 +1,38 @@
 import * as THREE from "three";
+import {
+  BatchedRenderer,
+  ColorOverLife,
+  ConstantColor,
+  ConstantValue,
+  Gradient,
+  IntervalValue,
+  ParticleEmitter,
+  ParticleSystem,
+  PointEmitter,
+  RenderMode,
+  Vector3,
+  Vector4,
+} from "three.quarks";
 import type { Enemy } from "./enemy";
 
 export class SpellFX {
   castBarWrap: HTMLDivElement | null = null;
   castBarFill: HTMLDivElement | null = null;
   castBarText: HTMLDivElement | null = null;
+  private renderer: BatchedRenderer | null = null;
+  private scene: THREE.Scene | null = null;
+
+  init(scene: THREE.Scene) {
+    if (this.renderer) return;
+    this.scene = scene;
+    this.renderer = new BatchedRenderer();
+    this.scene.add(this.renderer);
+  }
+
+  update(delta: number) {
+    if (!this.renderer) return;
+    this.renderer.update(delta);
+  }
 
   ensureCastBar() {
     if (this.castBarWrap) return;
@@ -141,5 +169,224 @@ export class SpellFX {
       else div.remove();
     };
     updateDmg();
+  }
+
+  private ensureRenderer() {
+    if (!this.renderer || !this.scene) {
+      throw new Error("SpellFX renderer not initialized");
+    }
+  }
+
+  private hexToVector3(hex: number) {
+    const r = ((hex >> 16) & 0xff) / 255;
+    const g = ((hex >> 8) & 0xff) / 255;
+    const b = (hex & 0xff) / 255;
+    return new Vector3(r, g, b);
+  }
+
+  private makeGradient(colorA: number, colorB: number) {
+    return new Gradient(
+      [
+        [this.hexToVector3(colorA), 0],
+        [this.hexToVector3(colorB), 1],
+      ],
+      [
+        [1, 0],
+        [0, 1],
+      ]
+    );
+  }
+
+  private registerEmitter(emitter: ParticleEmitter) {
+    this.ensureRenderer();
+    if (!this.scene || !this.renderer) return;
+    this.scene.add(emitter);
+    this.renderer.addSystem(emitter.system);
+    const cleanup = () => {
+      this.renderer?.deleteSystem(emitter.system);
+      emitter.removeFromParent();
+      emitter.system.removeAllEventListeners("destroy");
+    };
+    emitter.system.addEventListener("destroy", cleanup);
+  }
+
+  private createBurstEmitter(options: {
+    position: THREE.Vector3;
+    colorA: number;
+    colorB: number;
+    count: number;
+    life: [number, number];
+    speed: [number, number];
+    size: [number, number];
+  }) {
+    this.ensureRenderer();
+    const system = new ParticleSystem({
+      autoDestroy: true,
+      looping: false,
+      prewarm: false,
+      duration: Math.max(0.2, options.life[1] + 0.1),
+      shape: new PointEmitter(),
+      startLife: new IntervalValue(options.life[0], options.life[1]),
+      startSpeed: new IntervalValue(options.speed[0], options.speed[1]),
+      startRotation: new ConstantValue(0),
+      startSize: new IntervalValue(options.size[0], options.size[1]),
+      startColor: new ConstantColor(new Vector4(1, 1, 1, 1)),
+      emissionOverTime: new ConstantValue(0),
+      emissionOverDistance: new ConstantValue(0),
+      emissionBursts: [
+        {
+          time: 0,
+          count: new ConstantValue(options.count),
+          cycle: 1,
+          interval: 0,
+          probability: 1,
+        },
+      ],
+      renderMode: RenderMode.BillBoard,
+      material: new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+      behaviors: [new ColorOverLife(this.makeGradient(options.colorA, options.colorB))],
+      worldSpace: true,
+    });
+
+    const emitter = new ParticleEmitter(system);
+    emitter.position.copy(options.position);
+    this.registerEmitter(emitter);
+    system.play();
+    return emitter;
+  }
+
+  private createTrailEmitter(options: {
+    parent: THREE.Object3D;
+    colorA: number;
+    colorB: number;
+    rate: number;
+    life: [number, number];
+    speed: [number, number];
+    size: [number, number];
+  }) {
+    this.ensureRenderer();
+    const system = new ParticleSystem({
+      autoDestroy: true,
+      looping: true,
+      prewarm: false,
+      duration: 1,
+      shape: new PointEmitter(),
+      startLife: new IntervalValue(options.life[0], options.life[1]),
+      startSpeed: new IntervalValue(options.speed[0], options.speed[1]),
+      startRotation: new ConstantValue(0),
+      startSize: new IntervalValue(options.size[0], options.size[1]),
+      startColor: new ConstantColor(new Vector4(1, 1, 1, 1)),
+      emissionOverTime: new ConstantValue(options.rate),
+      emissionOverDistance: new ConstantValue(0),
+      renderMode: RenderMode.BillBoard,
+      material: new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+      behaviors: [new ColorOverLife(this.makeGradient(options.colorA, options.colorB))],
+      worldSpace: true,
+    });
+
+    const emitter = new ParticleEmitter(system);
+    options.parent.add(emitter);
+    this.renderer?.addSystem(system);
+    const cleanup = () => {
+      this.renderer?.deleteSystem(emitter.system);
+      emitter.removeFromParent();
+      emitter.system.removeAllEventListeners("destroy");
+    };
+    emitter.system.addEventListener("destroy", cleanup);
+    system.play();
+    return emitter;
+  }
+
+  spawnMageCast(school: string, position: THREE.Vector3) {
+    if (school === "arcane") {
+      this.createBurstEmitter({
+        position,
+        colorA: 0x8c65ff,
+        colorB: 0x4cc9ff,
+        count: 22,
+        life: [0.35, 0.6],
+        speed: [0.6, 1.6],
+        size: [0.08, 0.16],
+      });
+      return;
+    }
+    if (school === "fire") {
+      this.createBurstEmitter({
+        position,
+        colorA: 0xff6b1a,
+        colorB: 0xffd24a,
+        count: 18,
+        life: [0.25, 0.5],
+        speed: [0.8, 2.1],
+        size: [0.1, 0.2],
+      });
+    }
+  }
+
+  spawnMageImpact(school: string, position: THREE.Vector3) {
+    if (school === "arcane") {
+      this.createBurstEmitter({
+        position,
+        colorA: 0x7c5cff,
+        colorB: 0x6ee7ff,
+        count: 30,
+        life: [0.4, 0.7],
+        speed: [1.2, 2.6],
+        size: [0.12, 0.22],
+      });
+      return;
+    }
+    if (school === "fire") {
+      this.createBurstEmitter({
+        position,
+        colorA: 0xff3c1b,
+        colorB: 0xfff176,
+        count: 26,
+        life: [0.3, 0.6],
+        speed: [1.4, 2.8],
+        size: [0.12, 0.24],
+      });
+    }
+  }
+
+  spawnMageProjectileTrail(school: string, parent: THREE.Object3D) {
+    if (school === "arcane") {
+      return this.createTrailEmitter({
+        parent,
+        colorA: 0x9b6bff,
+        colorB: 0x64d9ff,
+        rate: 40,
+        life: [0.25, 0.5],
+        speed: [0.2, 0.6],
+        size: [0.06, 0.12],
+      });
+    }
+    if (school === "fire") {
+      return this.createTrailEmitter({
+        parent,
+        colorA: 0xff5a1f,
+        colorB: 0xffc04d,
+        rate: 35,
+        life: [0.2, 0.45],
+        speed: [0.2, 0.7],
+        size: [0.07, 0.14],
+      });
+    }
+    return null;
+  }
+
+  endEmitter(emitter: ParticleEmitter | null | undefined) {
+    if (!emitter) return;
+    emitter.system.endEmit();
   }
 }

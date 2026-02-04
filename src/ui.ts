@@ -112,6 +112,7 @@ export class UI {
         spellbar.style.boxShadow = "0 4px 16px rgba(0,0,0,0.65)";
         spellbar.style.padding = "12px 24px";
         spellbar.style.borderRadius = "18px";
+        spellbar.style.zIndex = "20000"; // Higher than modals
         for (let i = 0; i < 12; i++) {
             const slot = document.createElement("div");
             slot.className = "spell-slot";
@@ -140,7 +141,10 @@ export class UI {
             slot.draggable = true;
             slot.addEventListener("dragstart", (e) => {
                 const spellId = slot.dataset.spellId;
-                if (spellId) e.dataTransfer?.setData("spell-slot-index", i.toString());
+                if (spellId) {
+                    e.dataTransfer?.setData("text/plain", spellId);
+                    e.dataTransfer?.setData("spell-slot-index", i.toString());
+                }
             });
             slot.addEventListener("dragend", (e) => {
                 const idx = slot.dataset.index ? parseInt(slot.dataset.index, 10) : null;
@@ -167,6 +171,7 @@ export class UI {
                 if (this.tooltip.style.display === "block") this.positionTooltip(e as MouseEvent);
             });
             slot.addEventListener("mouseleave", () => this.hideTooltip());
+            slot.addEventListener("mousedown", (e) => e.stopPropagation());
             spellbar.appendChild(slot);
         }
         document.body.appendChild(spellbar);
@@ -260,6 +265,7 @@ export class UI {
         let isDragging = false;
         let dragOffset = { x: 0, y: 0 };
         header.addEventListener("mousedown", (e) => {
+            e.stopPropagation();
             isDragging = true;
             dragOffset = { x: e.clientX - overlay.offsetLeft, y: e.clientY - overlay.offsetTop };
         });
@@ -450,13 +456,20 @@ export class UI {
             card.style.color = "#f6d48b";
             card.style.fontWeight = "700";
             card.textContent = s.name;
+            card.addEventListener("mousedown", (e) => e.stopPropagation());
             card.addEventListener("dragstart", (e) => {
                 e.dataTransfer?.setData("text/plain", s.id);
+                e.dataTransfer?.setData("spell-id", s.id);
                 // allow drop outside modal by disabling overlay pointer events temporarily
-                Object.values(this.modals).forEach(m => m.overlay.style.pointerEvents = "none");
+                // We keep them on but use CSS or specific targets
+                Object.values(this.modals).forEach(m => {
+                    m.overlay.style.pointerEvents = "none";
+                });
             });
             card.addEventListener("dragend", () => {
-                Object.values(this.modals).forEach(m => m.overlay.style.pointerEvents = "auto");
+                Object.values(this.modals).forEach(m => {
+                    m.overlay.style.pointerEvents = "auto";
+                });
             });
             this.attachTooltip(card, s.description || s.name);
             this.spellbookList.appendChild(card);

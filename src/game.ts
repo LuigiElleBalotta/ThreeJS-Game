@@ -26,7 +26,7 @@ import { inferClipMapFromAnimations } from "./utils/animationProfile";
 import { RangedSpellProjectileSystem } from "./spells/ranged-spell.system";
 import { loadModelByPath, mergeAnimationClips } from "./utils/modelLoader";
 import { UNITY_WORLD_MODELS } from "./world/unity-world.config";
-import { UNITY_DECOR_BY_ID, UNITY_WORLD_DECORATIONS } from "./world/unity-decor.config";
+import { getUnityDecorationById, getUnityDecorations } from "./world/unity-decor-catalog";
 import { createWorldEditorPanel } from "./editor/world-editor.panel";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls";
 
@@ -2961,7 +2961,7 @@ export class Game {
         register: boolean = true,
         placementRef?: { decorId: string; position: { x: number; y: number; z: number }; rotationY: number },
     ) {
-        const entry = UNITY_DECOR_BY_ID[decorId];
+        const entry = getUnityDecorationById(decorId);
         if (!entry) return false;
         if (!this.useUnityWorldEnvironment) return false;
 
@@ -3036,7 +3036,7 @@ export class Game {
             return;
         }
 
-        const defaults = UNITY_WORLD_DECORATIONS.filter((d) => d.defaultSpawn);
+        const defaults = getUnityDecorations().filter((d) => d.defaultSpawn);
         for (const row of defaults) {
             await this.spawnUnityDecorationById(row.id, loadByExtension, undefined, undefined, true);
         }
@@ -3190,7 +3190,7 @@ export class Game {
         const loadByExtension = (path: string) => loadModelByPath(path);
         this.clearWorldDecorations();
         this.worldDecorPlacements = [];
-        for (const row of UNITY_WORLD_DECORATIONS.filter((d) => d.defaultSpawn)) {
+        for (const row of getUnityDecorations().filter((d) => d.defaultSpawn)) {
             await this.spawnUnityDecorationById(row.id, loadByExtension, undefined, undefined, true);
         }
         this.saveWorldDecorPlacements();

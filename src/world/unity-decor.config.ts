@@ -1,3 +1,5 @@
+import { UNITY_EXPORTED_DECORATIONS } from "./unity-exported-decor.generated";
+
 export interface UnityDecorationConfig {
   id: string;
   path: string;
@@ -22,7 +24,7 @@ export interface UnityDecorationConfig {
 
 // Placement is intentionally clustered around the playable spawn/village area.
 // Scaling uses targetHeight to normalize mixed-source FBX sizes.
-export const UNITY_WORLD_DECORATIONS: UnityDecorationConfig[] = [
+export const UNITY_WORLD_DECORATIONS_BASE: UnityDecorationConfig[] = [
   {
     id: "village-bonfire-center",
     path: "/unity-import/Game/Models/MapMisc/Fires/OrgrimmarBonfire/OrgrimmarBonfire.fbx",
@@ -181,6 +183,11 @@ export const UNITY_WORLD_DECORATIONS: UnityDecorationConfig[] = [
     defaultSpawn: false,
     collider: true,
   },
+];
+
+export const UNITY_WORLD_DECORATIONS: UnityDecorationConfig[] = [
+  ...UNITY_WORLD_DECORATIONS_BASE,
+  ...UNITY_EXPORTED_DECORATIONS,
 ];
 
 export const UNITY_DECOR_BY_ID: Record<string, UnityDecorationConfig> = UNITY_WORLD_DECORATIONS.reduce(

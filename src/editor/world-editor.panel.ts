@@ -1,5 +1,10 @@
 import type { Game } from "../game";
-import { UNITY_WORLD_DECORATIONS } from "../world/unity-decor.config";
+import {
+  clearImportedUnityDecorations,
+  getImportedUnityDecorations,
+  getUnityDecorations,
+  importUnityDecorationsFromCatalogJson,
+} from "../world/unity-decor-catalog";
 
 type TerrainOption = { label: string; value: string };
 type MenuItem = { label: string; action: () => void; enabled?: boolean };
@@ -81,7 +86,7 @@ function inspectorCard(title: string) {
   header.style.borderBottom = "1px solid #2d3644";
 
   const fold = document.createElement("span");
-  fold.textContent = "?";
+  fold.textContent = "v";
   fold.style.fontSize = "9px";
   fold.style.marginRight = "6px";
   fold.style.color = "#b9c5d3";
@@ -103,7 +108,7 @@ function inspectorCard(title: string) {
   header.style.cursor = "pointer";
   header.onclick = () => {
     opened = !opened;
-    fold.textContent = opened ? "?" : "?";
+    fold.textContent = opened ? "v" : ">";
     body.style.display = opened ? "grid" : "none";
   };
 
@@ -190,7 +195,9 @@ export function createWorldEditorPanel(game: Game) {
   btnClear.onclick = () => game.editorClearDecorations();
   const btnUnhide = toolButton("Unhide Map");
   btnUnhide.onclick = () => game.editorUnhideAllWorldModels();
-  top.append(btnSave, btnUndo, btnRedo, btnDefaults, btnClear, btnUnhide);
+  const btnImportCatalog = toolButton("Import Catalog");
+  const btnResetImported = toolButton("Reset Imported");
+  top.append(btnSave, btnUndo, btnRedo, btnDefaults, btnClear, btnUnhide, btnImportCatalog, btnResetImported);
 
   const topSpacer = document.createElement("div");
   topSpacer.style.flex = "1";
@@ -364,6 +371,66 @@ export function createWorldEditorPanel(game: Game) {
   bottomHeader.style.padding = "0 10px";
   bottomHeader.style.borderBottom = "1px solid #2a3340";
   bottomHeader.appendChild(sectionTitle("Project / Assets"));
+  const assetSearch = document.createElement("input");
+  assetSearch.type = "text";
+  assetSearch.placeholder = "Search assets (id/path)...";
+  assetSearch.style.height = "24px";
+  assetSearch.style.width = "260px";
+  assetSearch.style.padding = "0 8px";
+  assetSearch.style.border = "1px solid #3b4554";
+  assetSearch.style.borderRadius = "4px";
+  assetSearch.style.background = "#11161d";
+  assetSearch.style.color = "#e6edf3";
+  assetSearch.style.fontSize = "11px";
+  bottomHeader.appendChild(assetSearch);
+  const categoryFilter = document.createElement("select");
+  categoryFilter.style.height = "24px";
+  categoryFilter.style.padding = "0 8px";
+  categoryFilter.style.border = "1px solid #3b4554";
+  categoryFilter.style.borderRadius = "4px";
+  categoryFilter.style.background = "#11161d";
+  categoryFilter.style.color = "#e6edf3";
+  categoryFilter.style.fontSize = "11px";
+  const categoryOptions = [
+    ["all", "All"],
+    ["manual", "Manual"],
+    ["auto", "Auto"],
+    ["wmo", "WMO"],
+    ["world", "World"],
+    ["maps", "Maps"],
+    ["creature", "Creature"],
+    ["item", "Item"],
+    ["spell", "Spell"],
+  ];
+  for (const [value, label] of categoryOptions) {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = label;
+    categoryFilter.appendChild(opt);
+  }
+  bottomHeader.appendChild(categoryFilter);
+  const formatFilter = document.createElement("select");
+  formatFilter.style.height = "24px";
+  formatFilter.style.padding = "0 8px";
+  formatFilter.style.border = "1px solid #3b4554";
+  formatFilter.style.borderRadius = "4px";
+  formatFilter.style.background = "#11161d";
+  formatFilter.style.color = "#e6edf3";
+  formatFilter.style.fontSize = "11px";
+  const formatOptions = [
+    ["all", "Any"],
+    ["obj", "OBJ"],
+    ["fbx", "FBX"],
+    ["glb", "GLB"],
+    ["gltf", "GLTF"],
+  ];
+  for (const [value, label] of formatOptions) {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = label;
+    formatFilter.appendChild(opt);
+  }
+  bottomHeader.appendChild(formatFilter);
 
   const terrainSelect = document.createElement("select");
   terrainSelect.style.marginLeft = "auto";
@@ -392,6 +459,14 @@ export function createWorldEditorPanel(game: Game) {
   assetsGrid.style.padding = "10px";
   assetsGrid.style.overflow = "auto";
   bottom.appendChild(assetsGrid);
+  const assetFooter = document.createElement("div");
+  assetFooter.style.position = "absolute";
+  assetFooter.style.right = "10px";
+  assetFooter.style.bottom = "8px";
+  assetFooter.style.fontSize = "10px";
+  assetFooter.style.color = "#8ea0b2";
+  assetFooter.style.pointerEvents = "none";
+  bottom.appendChild(assetFooter);
 
   let menuEl: HTMLDivElement | null = null;
   const closeContextMenu = () => {
@@ -450,41 +525,112 @@ export function createWorldEditorPanel(game: Game) {
     menuEl = menu;
   };
 
-  for (const decor of UNITY_WORLD_DECORATIONS) {
-    const card = document.createElement("div");
-    card.style.background = "#11161d";
-    card.style.border = "1px solid #3b4554";
-    card.style.borderRadius = "4px";
-    card.style.padding = "4px";
-    card.style.cursor = "grab";
-    card.draggable = true;
-    card.ondragstart = (ev) => ev.dataTransfer?.setData("text/world-decor-id", decor.id);
-    card.ondblclick = () => game.editorPlaceDecoration(decor.id);
-    card.oncontextmenu = (ev) => {
-      ev.preventDefault();
-      showContextMenu(ev.clientX, ev.clientY, [
-        { label: "Place In Front of Camera", action: () => { void game.editorPlaceDecoration(decor.id); } },
-      ]);
-    };
+  const catalogInput = document.createElement("input");
+  catalogInput.type = "file";
+  catalogInput.accept = "application/json,.json";
+  catalogInput.style.display = "none";
+  document.body.appendChild(catalogInput);
 
-    const img = document.createElement("img");
-    img.src = decor.previewImage || game.groundTexturePath;
-    img.style.width = "100%";
-    img.style.height = "56px";
-    img.style.objectFit = "cover";
-    img.style.borderRadius = "3px";
+  btnImportCatalog.onclick = () => catalogInput.click();
+  catalogInput.onchange = async () => {
+    const file = catalogInput.files?.[0];
+    catalogInput.value = "";
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const result = importUnityDecorationsFromCatalogJson(text);
+      game.ui?.addChatMessage(
+        "System",
+        `Catalog import: +${result.added} added, ${result.updated} updated, ${result.skipped} skipped.`,
+      );
+      renderAssetCards();
+    } catch (err: any) {
+      game.ui?.addChatMessage("System", `Catalog import failed: ${err?.message ?? "invalid file"}`);
+    }
+  };
 
-    const txt = document.createElement("div");
-    txt.textContent = decor.id;
-    txt.style.fontSize = "10px";
-    txt.style.marginTop = "4px";
-    txt.style.whiteSpace = "nowrap";
-    txt.style.overflow = "hidden";
-    txt.style.textOverflow = "ellipsis";
+  btnResetImported.onclick = () => {
+    const importedCount = getImportedUnityDecorations().length;
+    clearImportedUnityDecorations();
+    renderAssetCards();
+    game.ui?.addChatMessage("System", `Imported catalog cleared (${importedCount} entries removed).`);
+  };
 
-    card.append(img, txt);
-    assetsGrid.appendChild(card);
-  }
+  const renderAssetCards = () => {
+    assetsGrid.innerHTML = "";
+    const query = assetSearch.value.trim().toLowerCase();
+    const category = categoryFilter.value;
+    const format = formatFilter.value;
+    const allDecor = getUnityDecorations();
+    const sorted = [...allDecor].sort((a, b) => {
+      const aAuto = a.id.startsWith("auto-") ? 1 : 0;
+      const bAuto = b.id.startsWith("auto-") ? 1 : 0;
+      if (aAuto !== bAuto) return aAuto - bAuto;
+      return a.id.localeCompare(b.id);
+    });
+    const filtered = sorted.filter((decor) => {
+      const lowerPath = decor.path.toLowerCase();
+      const lowerId = decor.id.toLowerCase();
+      if (query && !lowerId.includes(query) && !lowerPath.includes(query)) return false;
+      const isAuto = decor.id.startsWith("auto-");
+      if (category === "manual" && isAuto) return false;
+      if (category === "auto" && !isAuto) return false;
+      if (category === "wmo" && !lowerPath.includes("/wmo/")) return false;
+      if (category === "world" && !lowerPath.includes("/world/")) return false;
+      if (category === "maps" && !lowerPath.includes("/maps/")) return false;
+      if (category === "creature" && !lowerPath.includes("/creature/")) return false;
+      if (category === "item" && !lowerPath.includes("/item/")) return false;
+      if (category === "spell" && !lowerPath.includes("/spell")) return false;
+      if (format !== "all" && !lowerPath.endsWith(`.${format}`)) return false;
+      return true;
+    });
+    const visible = filtered.slice(0, 420);
+
+    for (const decor of visible) {
+      const card = document.createElement("div");
+      card.style.background = "#11161d";
+      card.style.border = "1px solid #3b4554";
+      card.style.borderRadius = "4px";
+      card.style.padding = "4px";
+      card.style.cursor = "grab";
+      card.draggable = true;
+      card.title = `${decor.id}\n${decor.path}`;
+      card.ondragstart = (ev) => ev.dataTransfer?.setData("text/world-decor-id", decor.id);
+      card.ondblclick = () => game.editorPlaceDecoration(decor.id);
+      card.oncontextmenu = (ev) => {
+        ev.preventDefault();
+        showContextMenu(ev.clientX, ev.clientY, [
+          { label: "Place In Front of Camera", action: () => { void game.editorPlaceDecoration(decor.id); } },
+        ]);
+      };
+
+      const img = document.createElement("img");
+      img.src = decor.previewImage || game.groundTexturePath;
+      img.style.width = "100%";
+      img.style.height = "56px";
+      img.style.objectFit = "cover";
+      img.style.borderRadius = "3px";
+
+      const txt = document.createElement("div");
+      txt.textContent = decor.id.startsWith("auto-")
+        ? decor.path.split("/").pop() ?? decor.id
+        : decor.id;
+      txt.style.fontSize = "10px";
+      txt.style.marginTop = "4px";
+      txt.style.whiteSpace = "nowrap";
+      txt.style.overflow = "hidden";
+      txt.style.textOverflow = "ellipsis";
+
+      card.append(img, txt);
+      assetsGrid.appendChild(card);
+    }
+    const importedCount = getImportedUnityDecorations().length;
+    assetFooter.textContent = `${filtered.length} assets${filtered.length > visible.length ? ` (showing ${visible.length})` : ""} | imported: ${importedCount}`;
+  };
+  assetSearch.oninput = renderAssetCards;
+  categoryFilter.onchange = renderAssetCards;
+  formatFilter.onchange = renderAssetCards;
+  renderAssetCards();
 
   const rendererContextHandler = (ev: MouseEvent) => {
     if (!game.editorSoftwareMode || !game.worldEditorMode) return;
@@ -585,6 +731,7 @@ export function createWorldEditorPanel(game: Game) {
       document.removeEventListener("click", closeMenuOnClick);
       document.removeEventListener("contextmenu", closeMenuOnClick, true);
       window.removeEventListener("keydown", keydownHandler);
+      catalogInput.remove();
       return;
     }
     refresh();

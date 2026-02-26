@@ -1,5 +1,5 @@
 import type { Game } from "../../game";
-import { UNITY_WORLD_DECORATIONS } from "../../world/unity-decor.config";
+import { getUnityDecorations } from "../../world/unity-decor-catalog";
 
 export async function worldEditorCommand(args: string[], ctx: { game: Game }) {
   const sub = (args[0] || "").toLowerCase();
@@ -20,8 +20,13 @@ export async function worldEditorCommand(args: string[], ctx: { game: Game }) {
     return;
   }
   if (sub === "list") {
-    const ids = UNITY_WORLD_DECORATIONS.map((d) => d.id).join(", ");
-    ctx.game.ui?.addChatMessage("System", `Decor IDs: ${ids}`);
+    const query = (args[1] || "").toLowerCase();
+    const rows = getUnityDecorations().filter((d) => !query || d.id.toLowerCase().includes(query) || d.path.toLowerCase().includes(query));
+    const preview = rows.slice(0, 40).map((d) => d.id).join(", ");
+    ctx.game.ui?.addChatMessage(
+      "System",
+      `Decor IDs: ${rows.length} match${query ? ` for '${query}'` : ""}. ${preview}${rows.length > 40 ? ", ..." : ""}`,
+    );
     return;
   }
   if (sub === "place") {

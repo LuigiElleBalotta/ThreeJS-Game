@@ -1,10 +1,10 @@
 import * as THREE from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
-import type { GLTF } from "three/examples/jsm/loaders/GLTFLoader";
 import { AnimationMixer, AnimationAction, LoopOnce } from "three";
 import { getClassById } from "./classes";
 import { AnimationController, ClipMap } from "./animationController";
 import { Spell } from "./types";
+import { inferClipMapFromAnimations } from "./utils/animationProfile";
+import { loadModelByPath, mergeAnimationClips } from "./utils/modelLoader";
 
 export class Player {
     maxHp: number = 100;
@@ -20,6 +20,7 @@ export class Player {
     speed: number = 0.35;
     isGameMaster: boolean = false;
     canFly: boolean = false;
+    groundLevel: number = 1;
 
     velocityY: number = 0;
     isOnGround: boolean = true;
@@ -38,6 +39,7 @@ export class Player {
 
     mixer?: AnimationMixer;
     actions: { [name: string]: AnimationAction } = {};
+    loadedClips: THREE.AnimationClip[] = [];
     animController?: AnimationController;
 
     constructor(classId: string = "warrior") {
@@ -62,42 +64,54 @@ export class Player {
     }
 
     protected loadModel() {
-        const loader = new GLTFLoader();
-        const modelPath = this.getModelPath();
-        loader.load(
-            modelPath,
-            (gltf: GLTF) => {
-                gltf.scene.traverse((child: THREE.Object3D) => {
-                    if ((child as THREE.Mesh).isMesh) {
-                        (child as THREE.Mesh).castShadow = true;
-                        (child as THREE.Mesh).receiveShadow = true;
-                    }
-                });
-                gltf.scene.rotation.y = this.getModelRotationY();
-                this.mesh.clear();
-                const scale = this.getModelScale();
-                gltf.scene.scale.set(scale, scale, scale);
-                gltf.scene.position.y = -1;
-                this.mesh.add(gltf.scene);
-                this.mesh.scale.set(1, 1, 1);
-                this.mesh.position.y = 1;
+        void this.loadModelAsync();
+    }
 
-                if (gltf.animations && gltf.animations.length > 0) {
-                    this.mixer = new AnimationMixer(gltf.scene);
-                    for (const clip of gltf.animations) {
-                        const action = this.mixer.clipAction(clip);
-                        action.enabled = true;
-                        action.clampWhenFinished = false;
-                        if (clip.name.toLowerCase().includes("jump")) {
-                            action.loop = LoopOnce;
-                        }
-                        this.actions[clip.name] = action;
-                    }
-                    this.animController = new AnimationController(this.actions, this.getClipMap());
-                    this.animController.setState({ moving: false, backwards: false, airborne: false, attacking: false });
-                }
+    protected async loadModelAsync() {
+        const modelPath = this.getModelPath();
+        const baseModel = await loadModelByPath(modelPath);
+        if (!baseModel) return;
+
+        const extraClips: THREE.AnimationClip[] = [];
+        for (const animPath of this.getAnimationPaths()) {
+            const animModel = await loadModelByPath(animPath);
+            if (animModel?.animations?.length) {
+                extraClips.push(...animModel.animations);
             }
-        );
+        }
+
+        const scene = baseModel.scene;
+        scene.traverse((child: THREE.Object3D) => {
+            if ((child as THREE.Mesh).isMesh) {
+                (child as THREE.Mesh).castShadow = true;
+                (child as THREE.Mesh).receiveShadow = true;
+            }
+        });
+        scene.rotation.y = this.getModelRotationY();
+        this.mesh.clear();
+        const scale = this.getModelScale();
+        scene.scale.set(scale, scale, scale);
+        scene.position.y = this.getModelYOffset();
+        this.mesh.add(scene);
+        this.mesh.scale.set(1, 1, 1);
+        this.mesh.position.y = 1;
+
+        this.loadedClips = mergeAnimationClips(baseModel.animations ?? [], extraClips);
+        if (this.loadedClips.length > 0) {
+            this.actions = {};
+            this.mixer = new AnimationMixer(scene);
+            for (const clip of this.loadedClips) {
+                const action = this.mixer.clipAction(clip);
+                action.enabled = true;
+                action.clampWhenFinished = false;
+                if (clip.name.toLowerCase().includes("jump") || clip.name.toLowerCase().includes("death")) {
+                    action.loop = LoopOnce;
+                }
+                this.actions[clip.name] = action;
+            }
+            this.animController = new AnimationController(this.actions, this.getClipMap());
+            this.animController.setState({ moving: false, backwards: false, airborne: false, attacking: false });
+        }
     }
 
     protected getModelPath() {
@@ -112,18 +126,16 @@ export class Player {
         return Math.PI;
     }
 
+    protected getModelYOffset() {
+        return -1;
+    }
+
+    protected getAnimationPaths(): string[] {
+        return [];
+    }
+
     protected getClipMap(): ClipMap {
-        const names = Object.keys(this.actions || {});
-        const find = (subs: string[]) =>
-            names.find(n => subs.some(s => n.toLowerCase().includes(s.toLowerCase())));
-        const attack = names.filter(n => /(attack|slash|impact|hit|kick)/i.test(n));
-        return {
-            idle: find(["idle"]),
-            run: find(["run"]),
-            runBack: find(["run(back)"]),
-            jump: find(["jump"]),
-            attack: attack.length ? attack : undefined,
-        };
+        return inferClipMapFromAnimations(this.loadedClips);
     }
 
     getBoundingBox(pos?: THREE.Vector3) {
@@ -218,15 +230,18 @@ export class Player {
         // Fisica salto/volo
         if (this.canFly) {
             this.velocityY = 0;
-            this.isOnGround = true;
+            if (this.mesh.position.y < this.groundLevel) {
+                this.mesh.position.y = this.groundLevel;
+            }
+            this.isOnGround = this.mesh.position.y <= this.groundLevel + 0.05;
         } else {
             const gravity = -0.04;
             this.mesh.position.y += this.velocityY;
             if (!this.isOnGround) {
                 this.velocityY += gravity * delta * 60;
             }
-            if (this.mesh.position.y <= 1) {
-                this.mesh.position.y = 1;
+            if (this.mesh.position.y <= this.groundLevel) {
+                this.mesh.position.y = this.groundLevel;
                 this.velocityY = 0;
                 this.isOnGround = true;
             } else {
@@ -270,6 +285,7 @@ export class Player {
             backwards: this.moveState.backwards,
             airborne: !this.isOnGround,
             attacking: this.isAttacking,
+            swimming: this.canFly && (this.mesh.position.y > this.groundLevel + 0.08 || this.moveState.moving),
         });
     }
 
@@ -325,8 +341,3 @@ export class Player {
         }
     }
 }
-
-
-
-
-

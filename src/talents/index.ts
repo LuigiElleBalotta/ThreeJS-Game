@@ -29,6 +29,15 @@ export const TALENT_REGISTRY: Record<string, Talent> = {
       player.attackDamage = Math.round(player.attackDamage * 1.05);
     },
   },
+  ranger_deadeye: {
+    id: "ranger_deadeye",
+    name: "Deadeye",
+    description: "Increase ranged damage by 8%.",
+    classTags: ["ranger"],
+    apply: ({ player }) => {
+      player.attackDamage = Math.round(player.attackDamage * 1.08);
+    },
+  },
 };
 
 export function getTalentsForClass(classId: string) {

@@ -7,6 +7,8 @@ import { enemyScripts } from "./enemyScripts";
 import { evilWizardAI } from "./enemyScripts/evilWizard";
 import { waypointScripts, WaypointScriptFn } from "./waypointScripts";
 import { CreatureSpawn } from "./creatures";
+import { AnimationController } from "./animationController";
+import { inferClipMapFromAnimations } from "./utils/animationProfile";
 
 export class Enemy {
     mesh: THREE.Group;
@@ -44,6 +46,9 @@ export class Enemy {
 
     mixer?: THREE.AnimationMixer;
     actions: { [name: string]: THREE.AnimationAction } = {};
+    loadedClips: THREE.AnimationClip[] = [];
+    animController?: AnimationController;
+    attackAnimatingUntil: number = 0;
 
     // --- Health bar 2D DOM
     healthBarDiv: HTMLDivElement;
@@ -135,14 +140,14 @@ export class Enemy {
             this.mesh.add(zombie);
 
             if (prefab.animations && prefab.animations.length > 0) {
+                this.loadedClips = prefab.animations;
                 this.mixer = new THREE.AnimationMixer(zombie);
                 for (const clip of prefab.animations) {
                     const action = this.mixer.clipAction(clip);
                     this.actions[clip.name] = action;
-                    if (clip.name.toLowerCase().includes("run") || clip.name.toLowerCase().includes("walk") || clip.name.toLowerCase().includes("idle")) {
-                        action.play();
-                    }
                 }
+                this.animController = new AnimationController(this.actions, inferClipMapFromAnimations(this.loadedClips));
+                this.updateAnimationState(false, false);
             }
         }
 
@@ -171,6 +176,7 @@ export class Enemy {
         if (this.hp <= 0) {
             this.alive = false;
             this.deathTime = Date.now();
+            this.updateAnimationState(false, false);
             window.dispatchEvent(new CustomEvent("enemyKilled", { detail: { enemy: this } }));
         }
     }
@@ -253,6 +259,7 @@ export class Enemy {
         }
 
         if (!this.alive) {
+            this.updateAnimationState(false, false);
             this.healthBarDiv.style.display = "none";
             return;
         }
@@ -262,6 +269,7 @@ export class Enemy {
         // Friendly creatures: can still patrol
         if (!this.isEnemy || player.isGameMaster || !player.isAlive() || playerIsGhost) {
             if (this.waypoints.length > 0) this.updatePatrol();
+            this.updateAnimationState(this.waypoints.length > 0, false);
             return;
         }
 
@@ -290,6 +298,7 @@ export class Enemy {
                     player.takeDamage(this.damage);
                     window.dispatchEvent(new CustomEvent("playerDamage", { detail: { amount: this.damage, sourceEnemy: this } }));
                     this.lastAttack = now;
+                    this.attackAnimatingUntil = now + 500;
                 }
             }
         } else if (this.waypoints.length > 0) {
@@ -311,6 +320,11 @@ export class Enemy {
         if (this.scriptId && enemyScripts[this.scriptId]) {
             enemyScripts[this.scriptId](this, { player, now: Date.now(), delta: 1 / 60 });
         }
+
+        const moving = this.currentCast
+            ? false
+            : ((distance > this.attackRange && distance < leashRange) || this.waypoints.length > 0);
+        this.updateAnimationState(moving, false);
     }
 
     startCast(spell: any, target: Player, now: number) {
@@ -323,6 +337,7 @@ export class Enemy {
         }
         this.currentCast = { spell, target, start: now, end: now + castTime };
         if (this.castBarInner) this.castBarInner.style.width = "0%";
+        this.updateAnimationState(false, false);
     }
 
     updateCasting(now: number, player: Player) {
@@ -341,6 +356,7 @@ export class Enemy {
             window.dispatchEvent(new CustomEvent("playerDamage", { detail: { amount: dmg, sourceEnemy: this } }));
             this.currentCast = null;
             if (this.castBarDiv) this.castBarDiv.style.display = "none";
+            this.attackAnimatingUntil = now + 400;
         }
     }
 
@@ -376,6 +392,19 @@ export class Enemy {
         const pct = Math.min(1, (now - start) / (end - start));
         const remaining = Math.max(0, (end - now) / 1000);
         return { pct, remaining, spell };
+    }
+
+    private updateAnimationState(moving: boolean, backwards: boolean) {
+        if (!this.animController) return;
+        const now = Date.now();
+        this.animController.setState({
+            moving,
+            backwards,
+            airborne: false,
+            attacking: now < this.attackAnimatingUntil,
+            casting: !!this.currentCast,
+            dead: !this.alive,
+        });
     }
 
 }

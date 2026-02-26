@@ -19,6 +19,12 @@ export const CHARACTER_CLASSES: CharacterClass[] = [
     baseStats: { hp: 110, mana: 80, attackDamage: 20 },
     starterSpells: ["sinister_strike", "backstab"],
   },
+  {
+    id: "ranger",
+    name: "Ranger",
+    baseStats: { hp: 105, mana: 120, attackDamage: 21 },
+    starterSpells: ["aimed_shot", "shadow_arrow"],
+  },
 ];
 
 export function getClassById(id: string) {

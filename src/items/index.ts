@@ -74,6 +74,16 @@ export const ITEM_REGISTRY: Record<string, Item> = {
     stats: { agility: 2, stamina: 2 },
     rarity: "uncommon",
   },
+  dark_ranger_bow: {
+    id: "dark_ranger_bow",
+    name: "Dark Ranger Bow",
+    description: "A blackwood bow favored by elite rangers.",
+    slot: "weapon",
+    stats: { agility: 4, crit: 2 },
+    classTags: ["ranger"],
+    rarity: "epic",
+    bindOnPickup: true,
+  },
 };
 
 export function getRandomLoot(): Item {

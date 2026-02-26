@@ -16,12 +16,41 @@ import {
 } from "three.quarks";
 import type { Enemy } from "./enemy";
 
+const PROJECTILE_TEXTURE_BY_SCHOOL: Record<string, string> = {
+  fire: "/unity-import/Realistic Effects Pack/Materials/Projectiles/Fireball1/EnergyBall3.png",
+  arcane: "/unity-import/Realistic Effects Pack/Materials/Projectiles/BlueFireball3/EnergyBall4.png",
+  shadow: "/unity-import/Realistic Effects Pack/Materials/Projectiles/BlackFireball1/SmokeBall10.png",
+  frost: "/unity-import/Realistic Effects Pack/Materials/Projectiles/Frostbolt1/EnergyBall5.png",
+  nature: "/unity-import/Realistic Effects Pack/Materials/Projectiles/GreenFireball1/EnergyBall6.png",
+  physical: "/unity-import/Resources/Exported/spells/star8.png",
+};
+
+const TRAIL_TEXTURE_BY_SCHOOL: Record<string, string> = {
+  fire: "/unity-import/Realistic Effects Pack/Materials/Projectiles/Fireball1/TrailBall3.png",
+  arcane: "/unity-import/Realistic Effects Pack/Materials/Projectiles/BlueFireball3/EnergyBall4Trail.png",
+  shadow: "/unity-import/Realistic Effects Pack/Materials/Projectiles/PurpleFireball1/SmokeBall11.png",
+  frost: "/unity-import/Realistic Effects Pack/Materials/Projectiles/FrostMeteor1/TrailBall12.png",
+  nature: "/unity-import/Realistic Effects Pack/Materials/Projectiles/GreenFireball1/TrailBall6.png",
+  physical: "/unity-import/Realistic Effects Pack/Materials/Share/Trail2Glow.png",
+};
+
+const IMPACT_TEXTURE_BY_SCHOOL: Record<string, string> = {
+  fire: "/unity-import/Realistic Effects Pack/Materials/Projectiles/Fireball1/Explosion.png",
+  arcane: "/unity-import/Resources/Exported/spells/yellow_glow3.png",
+  shadow: "/unity-import/Resources/Exported/spells/greyglowball64.png",
+  frost: "/unity-import/Realistic Effects Pack/Materials/Projectiles/FrostMeteor1/IceExplosion12.png",
+  nature: "/unity-import/Resources/Exported/spells/genericglow64.png",
+  physical: "/unity-import/Resources/Exported/spells/dust1_a.png",
+};
+
 export class SpellFX {
   castBarWrap: HTMLDivElement | null = null;
   castBarFill: HTMLDivElement | null = null;
   castBarText: HTMLDivElement | null = null;
   private renderer: BatchedRenderer | null = null;
   private scene: THREE.Scene | null = null;
+  private textureLoader = new THREE.TextureLoader();
+  private textureCache = new Map<string, THREE.Texture>();
 
   init(scene: THREE.Scene) {
     if (this.renderer) return;
@@ -129,11 +158,31 @@ export class SpellFX {
     }, 1000);
   }
 
-  spawnProjectile(color: number | undefined, origin: THREE.Vector3, target: Enemy, scene: THREE.Scene) {
-    const boltGeo = new THREE.SphereGeometry(0.12, 8, 8);
-    const boltMat = new THREE.MeshBasicMaterial({ color: color ?? 0x6ec3ff });
+  spawnProjectile(
+    color: number | undefined,
+    origin: THREE.Vector3,
+    target: Enemy,
+    scene: THREE.Scene,
+    options?: { school?: string; spellId?: string },
+  ) {
+    const school = options?.school ?? "arcane";
+    const texturePath = PROJECTILE_TEXTURE_BY_SCHOOL[school] ?? PROJECTILE_TEXTURE_BY_SCHOOL.arcane;
+    const texture = this.getTexture(texturePath);
+    const size = school === "physical" ? 0.22 : school === "shadow" ? 0.36 : 0.3;
+    const boltGeo = new THREE.PlaneGeometry(size, size);
+    const boltMat = new THREE.MeshBasicMaterial({
+      color: color ?? 0x6ec3ff,
+      map: texture,
+      transparent: true,
+      opacity: 0.95,
+      alphaTest: 0.08,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
     const bolt = new THREE.Mesh(boltGeo, boltMat);
     bolt.position.copy(origin);
+    bolt.lookAt(target.mesh.position);
     scene.add(bolt);
     return bolt;
   }
@@ -198,6 +247,25 @@ export class SpellFX {
     );
   }
 
+  private getTexture(path: string) {
+    if (!path) return null;
+    const cached = this.textureCache.get(path);
+    if (cached) return cached;
+    const texture = this.textureLoader.load(path);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    this.textureCache.set(path, texture);
+    return texture;
+  }
+
+  private getProjectilePalette(school: string) {
+    if (school === "fire") return { a: 0xff6b1a, b: 0xffdf78 };
+    if (school === "arcane") return { a: 0x8f65ff, b: 0x6ed2ff };
+    if (school === "shadow") return { a: 0x6e3fff, b: 0xbe73ff };
+    if (school === "frost") return { a: 0x7ad2ff, b: 0xd4f5ff };
+    if (school === "nature") return { a: 0x4ecf6b, b: 0xd7ffa0 };
+    return { a: 0xdcc69a, b: 0xf8ecd0 };
+  }
+
   private registerEmitter(emitter: ParticleEmitter) {
     this.ensureRenderer();
     if (!this.scene || !this.renderer) return;
@@ -215,6 +283,7 @@ export class SpellFX {
     position: THREE.Vector3;
     colorA: number;
     colorB: number;
+    texturePath?: string;
     count: number;
     life: [number, number];
     speed: [number, number];
@@ -246,6 +315,7 @@ export class SpellFX {
       renderMode: RenderMode.BillBoard,
       material: new THREE.MeshBasicMaterial({
         color: 0xffffff,
+        map: options.texturePath ? this.getTexture(options.texturePath) : null,
         transparent: true,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
@@ -265,6 +335,7 @@ export class SpellFX {
     parent: THREE.Object3D;
     colorA: number;
     colorB: number;
+    texturePath?: string;
     rate: number;
     life: [number, number];
     speed: [number, number];
@@ -287,6 +358,7 @@ export class SpellFX {
       renderMode: RenderMode.BillBoard,
       material: new THREE.MeshBasicMaterial({
         color: 0xffffff,
+        map: options.texturePath ? this.getTexture(options.texturePath) : null,
         transparent: true,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
@@ -308,82 +380,58 @@ export class SpellFX {
     return emitter;
   }
 
+  spawnSpellCast(school: string, position: THREE.Vector3) {
+    const palette = this.getProjectilePalette(school);
+    this.createBurstEmitter({
+      position,
+      colorA: palette.a,
+      colorB: palette.b,
+      texturePath: IMPACT_TEXTURE_BY_SCHOOL[school] ?? IMPACT_TEXTURE_BY_SCHOOL.arcane,
+      count: school === "physical" ? 10 : 18,
+      life: [0.25, 0.55],
+      speed: [0.7, 2.2],
+      size: [0.09, 0.2],
+    });
+  }
+
+  spawnSpellImpact(school: string, position: THREE.Vector3) {
+    const palette = this.getProjectilePalette(school);
+    this.createBurstEmitter({
+      position,
+      colorA: palette.a,
+      colorB: palette.b,
+      texturePath: IMPACT_TEXTURE_BY_SCHOOL[school] ?? IMPACT_TEXTURE_BY_SCHOOL.arcane,
+      count: school === "physical" ? 14 : 28,
+      life: [0.3, 0.7],
+      speed: [1.1, 2.9],
+      size: [0.12, 0.26],
+    });
+  }
+
+  spawnProjectileTrail(school: string, parent: THREE.Object3D) {
+    const palette = this.getProjectilePalette(school);
+    return this.createTrailEmitter({
+      parent,
+      colorA: palette.a,
+      colorB: palette.b,
+      texturePath: TRAIL_TEXTURE_BY_SCHOOL[school] ?? TRAIL_TEXTURE_BY_SCHOOL.arcane,
+      rate: school === "physical" ? 20 : 38,
+      life: [0.2, 0.55],
+      speed: [0.15, 0.8],
+      size: [0.06, 0.14],
+    });
+  }
+
   spawnMageCast(school: string, position: THREE.Vector3) {
-    if (school === "arcane") {
-      this.createBurstEmitter({
-        position,
-        colorA: 0x8c65ff,
-        colorB: 0x4cc9ff,
-        count: 22,
-        life: [0.35, 0.6],
-        speed: [0.6, 1.6],
-        size: [0.08, 0.16],
-      });
-      return;
-    }
-    if (school === "fire") {
-      this.createBurstEmitter({
-        position,
-        colorA: 0xff6b1a,
-        colorB: 0xffd24a,
-        count: 18,
-        life: [0.25, 0.5],
-        speed: [0.8, 2.1],
-        size: [0.1, 0.2],
-      });
-    }
+    this.spawnSpellCast(school, position);
   }
 
   spawnMageImpact(school: string, position: THREE.Vector3) {
-    if (school === "arcane") {
-      this.createBurstEmitter({
-        position,
-        colorA: 0x7c5cff,
-        colorB: 0x6ee7ff,
-        count: 30,
-        life: [0.4, 0.7],
-        speed: [1.2, 2.6],
-        size: [0.12, 0.22],
-      });
-      return;
-    }
-    if (school === "fire") {
-      this.createBurstEmitter({
-        position,
-        colorA: 0xff3c1b,
-        colorB: 0xfff176,
-        count: 26,
-        life: [0.3, 0.6],
-        speed: [1.4, 2.8],
-        size: [0.12, 0.24],
-      });
-    }
+    this.spawnSpellImpact(school, position);
   }
 
   spawnMageProjectileTrail(school: string, parent: THREE.Object3D) {
-    if (school === "arcane") {
-      return this.createTrailEmitter({
-        parent,
-        colorA: 0x9b6bff,
-        colorB: 0x64d9ff,
-        rate: 40,
-        life: [0.25, 0.5],
-        speed: [0.2, 0.6],
-        size: [0.06, 0.12],
-      });
-    }
-    if (school === "fire") {
-      return this.createTrailEmitter({
-        parent,
-        colorA: 0xff5a1f,
-        colorB: 0xffc04d,
-        rate: 35,
-        life: [0.2, 0.45],
-        speed: [0.2, 0.7],
-        size: [0.07, 0.14],
-      });
-    }
-    return null;
+    return this.spawnProjectileTrail(school, parent);
   }
 
   spawnBurnAura(target: THREE.Object3D, durationMs: number = 1200) {

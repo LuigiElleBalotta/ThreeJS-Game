@@ -8,7 +8,8 @@ export function flyCommand(args: string[], ctx: { game: Game }) {
   } else if (mode === "off") {
     if (ctx.game.player) {
       ctx.game.player.canFly = false;
-      ctx.game.player.mesh.position.y = Math.max(ctx.game.player.mesh.position.y, 1);
+      const minY = ctx.game.player.groundLevel + 0.05;
+      ctx.game.player.mesh.position.y = Math.max(ctx.game.player.mesh.position.y, minY);
     }
     ctx.game.ui?.addChatMessage("System", "Fly mode OFF.");
   } else {

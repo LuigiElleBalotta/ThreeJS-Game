@@ -4,9 +4,16 @@ import { AnimationAction } from "three";
 export interface ClipMap {
     idle?: string;
     run?: string;
+    walk?: string;
     runBack?: string;
+    swim?: string;
+    swimBack?: string;
+    swimIdle?: string;
     jump?: string;
     attack?: string | string[];
+    cast?: string;
+    death?: string;
+    hit?: string;
 }
 
 export class AnimationController {
@@ -20,8 +27,34 @@ export class AnimationController {
         this.clipMap = clipMap;
     }
 
-    setState(opts: { moving: boolean; backwards: boolean; airborne: boolean; attacking: boolean }) {
-        const { moving, backwards, airborne, attacking } = opts;
+    setState(opts: { moving: boolean; backwards: boolean; airborne: boolean; attacking: boolean; casting?: boolean; dead?: boolean; swimming?: boolean }) {
+        const { moving, backwards, airborne, attacking, casting = false, dead = false, swimming = false } = opts;
+        if (dead && this.clipMap.death) {
+            this.play(this.clipMap.death);
+            return;
+        }
+        if (casting && this.clipMap.cast) {
+            this.play(this.clipMap.cast);
+            return;
+        }
+        if (swimming) {
+            if (moving) {
+                if (backwards && this.clipMap.swimBack) {
+                    this.play(this.clipMap.swimBack);
+                } else if (this.clipMap.swim) {
+                    this.play(this.clipMap.swim);
+                } else if (this.clipMap.swimIdle) {
+                    this.play(this.clipMap.swimIdle);
+                } else if (this.clipMap.idle) {
+                    this.play(this.clipMap.idle);
+                }
+            } else if (this.clipMap.swimIdle) {
+                this.play(this.clipMap.swimIdle);
+            } else if (this.clipMap.idle) {
+                this.play(this.clipMap.idle);
+            }
+            return;
+        }
         if (attacking) {
             if (this.current && (this.current as any)._clip.name.toLowerCase().includes("attack")) return;
             this.playAttack();
@@ -36,6 +69,8 @@ export class AnimationController {
                 this.play(this.clipMap.runBack);
             } else if (this.clipMap.run) {
                 this.play(this.clipMap.run);
+            } else if (this.clipMap.walk) {
+                this.play(this.clipMap.walk);
             } else if (this.clipMap.idle) {
                 this.play(this.clipMap.idle);
             }

@@ -13,6 +13,7 @@ import { gameObjectTemplates, gameObjectSpawns, buildGeometryGroup } from "./gam
 import { WarriorPlayer } from "./players/warrior";
 import { RoguePlayer } from "./players/rogue";
 import { MagePlayer } from "./players/mage";
+import { RangerPlayer } from "./players/ranger";
 import { SpellFX } from "./spellFx";
 import { gossipMenus, npcTexts } from "./dialogs";
 import { AmmoPhysics } from "@enable3d/ammo-physics";
@@ -21,8 +22,46 @@ import { QUESTS, QuestDefinition, QuestProgressState } from "./quests";
 import { waypointScripts } from "./waypointScripts";
 import { CreatureSpawn } from "./creatures";
 import type { ParticleEmitter } from "three.quarks";
+import { inferClipMapFromAnimations } from "./utils/animationProfile";
+import { RangedSpellProjectileSystem } from "./spells/ranged-spell.system";
+import { loadModelByPath, mergeAnimationClips } from "./utils/modelLoader";
+import { UNITY_WORLD_MODELS } from "./world/unity-world.config";
+import { UNITY_DECOR_BY_ID, UNITY_WORLD_DECORATIONS } from "./world/unity-decor.config";
+import { createWorldEditorPanel } from "./editor/world-editor.panel";
+import { TransformControls } from "three/examples/jsm/controls/TransformControls";
 
 export class Game {
+    worldDecorPlacements: { decorId: string; position: { x: number; y: number; z: number }; rotationY: number }[] = [];
+    worldDecorInstances: { id: string; root: THREE.Object3D; obstacles: THREE.Object3D[]; placement?: { decorId: string; position: { x: number; y: number; z: number }; rotationY: number } }[] = [];
+    worldMapInstances: { id: string; root: THREE.Object3D; obstacles: THREE.Object3D[] }[] = [];
+    hiddenWorldModelIds: Set<string> = new Set();
+    worldAssetCache: Map<string, any> = new Map();
+    editorSoftwareMode: boolean = false;
+    editorPanel: HTMLDivElement | null = null;
+    editorRightMouseDown: boolean = false;
+    editorCameraYaw: number = 0;
+    editorCameraPitch: number = -0.15;
+    editorCameraSpeed: number = 20;
+    editorLastMouseX: number = 0;
+    editorLastMouseY: number = 0;
+    editorSelectionHelper: THREE.BoxHelper | null = null;
+    editorSelectedDecorRoot: THREE.Object3D | null = null;
+    editorSelectedSource: "decor" | "map" | null = null;
+    editorTransformControls: TransformControls | null = null;
+    editorTransformHelper: THREE.Object3D | null = null;
+    editorTransformMode: "translate" | "rotate" | "scale" = "translate";
+    editorTransformSpace: "local" | "world" = "local";
+    editorGizmoDragging: boolean = false;
+    editorSnapEnabled: boolean = false;
+    editorTranslationSnap: number = 0.5;
+    editorRotationSnapDeg: number = 15;
+    editorScaleSnap: number = 0.1;
+    editorUndoStack: { decor: { decorId: string; position: { x: number; y: number; z: number }; rotationY: number }[]; hiddenMapIds: string[] }[] = [];
+    editorRedoStack: { decor: { decorId: string; position: { x: number; y: number; z: number }; rotationY: number }[]; hiddenMapIds: string[] }[] = [];
+    editorDragStartSnapshot: { decor: { decorId: string; position: { x: number; y: number; z: number }; rotationY: number }[]; hiddenMapIds: string[] } | null = null;
+    groundMesh: THREE.Mesh | null = null;
+    groundTexturePath: string = "/unity-import/Tilesets/durotar/durotardirt.png";
+    groundTextureRepeat: number = 120;
     scene: THREE.Scene;
     physics!: AmmoPhysics;
     camera: THREE.PerspectiveCamera;
@@ -39,6 +78,7 @@ export class Game {
     healthBarsVisible: boolean = true;
     healthBarStatusDiv!: HTMLDivElement;
     sceneObstacles: THREE.Mesh[] = [];
+    groundRaycaster: THREE.Raycaster = new THREE.Raycaster();
 
     loaderDiv!: HTMLDivElement;
     fpsDiv!: HTMLDivElement;
@@ -62,7 +102,8 @@ export class Game {
     globalCooldown: number = 650;
     lastGlobalCast: number = 0;
     spellSlots: (string | null)[] = Array(12).fill(null);
-    projectiles: { mesh: THREE.Mesh, target: Enemy, damage: number, isCrit: boolean, speed: number, trail?: ParticleEmitter | null }[] = [];
+    projectiles: { mesh: THREE.Mesh, target: Enemy, system: RangedSpellProjectileSystem, trail?: ParticleEmitter | null }[] = [];
+    worldAnimMixers: THREE.AnimationMixer[] = [];
     casting: { spell: any; slot: number; target: Enemy | null; start: number; end: number } | null = null;
     fx: SpellFX = new SpellFX();
     isGhost: boolean = false;
@@ -103,6 +144,16 @@ export class Game {
     currentCharacter: any | null = null;
     loginOverlay: HTMLDivElement | null = null;
     characterOverlay: HTMLDivElement | null = null;
+    useUnityWorldEnvironment: boolean = true;
+    groundProbeReady: boolean = false;
+    collisionDebugEnabled: boolean = false;
+    collisionDebugRays: THREE.Object3D[] = [];
+    collisionDebugHud: HTMLDivElement | null = null;
+    skyTextureActive: boolean = false;
+    selectionTexture: THREE.Texture | null = null;
+    playerLoginLight: THREE.Object3D | null = null;
+    worldEditorMode: boolean = false;
+    terrainDetailMeshes: THREE.Mesh[] = [];
 
     constructor() {
         this.scene = new THREE.Scene();
@@ -258,6 +309,33 @@ export class Game {
             this.keys.add(e.key.toLowerCase());
 
             const key = e.key;
+            if (this.editorSoftwareMode) {
+                if (e.ctrlKey && key.toLowerCase() === "z") {
+                    e.preventDefault();
+                    this.editorUndo();
+                    return;
+                }
+                if (e.ctrlKey && key.toLowerCase() === "y") {
+                    e.preventDefault();
+                    this.editorRedo();
+                    return;
+                }
+                if (e.ctrlKey && key.toLowerCase() === "d") {
+                    e.preventDefault();
+                    this.editorDuplicateSelection();
+                    return;
+                }
+                if (key === "Escape") this.togglePauseMenu();
+                if (key === "Delete") this.removeSelectedEditorDecoration();
+                if (!this.editorRightMouseDown) {
+                    const lower = key.toLowerCase();
+                    if (lower === "w") this.editorSetTransformMode("translate");
+                    if (lower === "e") this.editorSetTransformMode("rotate");
+                    if (lower === "r") this.editorSetTransformMode("scale");
+                    if (lower === "f") this.editorFocusSelection();
+                }
+                return;
+            }
             if (key === "1") this.castSpell(0);
             if (key === "2") this.castSpell(1);
             if (key === "3") this.castSpell(2);
@@ -271,7 +349,7 @@ export class Game {
             if (key === "-") this.castSpell(10);
             if (key.toLowerCase() === "l") this.toggleQuestLog();
             if (key === " ") {
-                if (this.player) this.player.jump();
+                if (this.player && !this.player.canFly) this.player.jump();
             }
             if (key === "Escape") {
                 if (this.selectedEnemy) {
@@ -287,17 +365,31 @@ export class Game {
         });
 
         window.addEventListener("mousedown", (e) => {
+            const target = e.target as HTMLElement | null;
+            if (target?.closest?.("#world-editor-panel")) return;
+            if (this.editorSoftwareMode) {
+                if (e.button === 2) {
+                    this.editorRightMouseDown = true;
+                    this.editorLastMouseX = e.clientX;
+                    this.editorLastMouseY = e.clientY;
+                }
+                if (e.button === 0) {
+                    if (this.editorTransformControls?.dragging) return;
+                    this.selectEditorDecorationAtScreen(e.clientX, e.clientY);
+                }
+                return;
+            }
             if (e.button === 2) this.rightMouseDown = true;
             if (e.button === 0) {
                 this.mouseLeftDown = true;
                 this.tryOpenGossip();
 
-                // Selezione nemico con click
+                // Selezione creatura (nemico o friendly) con click
                 const raycaster = new THREE.Raycaster();
                 raycaster.setFromCamera(this.mousePos, this.camera);
                 let found: Enemy | null = null;
                 for (const enemy of this.enemies) {
-                    if (!enemy.isAlive() || !enemy.isEnemy) continue;
+                    if (!enemy.isAlive()) continue;
                     const intersects = raycaster.intersectObject(enemy.mesh, true);
                     if (intersects.length > 0) {
                         found = enemy;
@@ -360,6 +452,12 @@ export class Game {
         });
 
         window.addEventListener("mouseup", (e) => {
+            const target = e.target as HTMLElement | null;
+            if (target?.closest?.("#world-editor-panel")) return;
+            if (this.editorSoftwareMode) {
+                if (e.button === 2) this.editorRightMouseDown = false;
+                return;
+            }
             if (e.button === 2) this.rightMouseDown = false;
             if (e.button === 0) this.mouseLeftDown = false;
         });
@@ -370,6 +468,27 @@ export class Game {
             const rect = this.renderer.domElement.getBoundingClientRect();
             this.mousePos.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
             this.mousePos.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+            if (this.editorSoftwareMode && this.editorRightMouseDown) {
+                const dx = event.clientX - this.editorLastMouseX;
+                const dy = event.clientY - this.editorLastMouseY;
+                this.editorLastMouseX = event.clientX;
+                this.editorLastMouseY = event.clientY;
+                this.editorCameraYaw -= dx * 0.004;
+                this.editorCameraPitch -= dy * 0.003;
+                this.editorCameraPitch = Math.max(-1.45, Math.min(1.45, this.editorCameraPitch));
+            }
+        });
+
+        this.renderer.domElement.addEventListener("dragover", (e) => {
+            if (!this.editorSoftwareMode || !this.worldEditorMode) return;
+            e.preventDefault();
+        });
+        this.renderer.domElement.addEventListener("drop", (e) => {
+            if (!this.editorSoftwareMode || !this.worldEditorMode) return;
+            e.preventDefault();
+            const decorId = e.dataTransfer?.getData("text/world-decor-id");
+            if (!decorId) return;
+            this.editorPlaceDecorationAtScreen(decorId, e.clientX, e.clientY);
         });
 
         window.addEventListener("playerAttack", () => this.handleAttack());
@@ -809,11 +928,140 @@ export class Game {
         }
     }
 
+    private loadEnvironmentTextures() {
+        const loader = new THREE.TextureLoader();
+        loader.load(
+            "/unity-import/Game/Textures/blue.png",
+            (skyTexture) => {
+                skyTexture.colorSpace = THREE.SRGBColorSpace;
+                this.scene.background = skyTexture;
+                this.skyTextureActive = true;
+            },
+            undefined,
+            (err) => console.warn("Unable to load sky texture", err)
+        );
+    }
+
+    private applyGroundTexture(ground: THREE.Mesh, path: string = this.groundTexturePath, repeat: number = this.groundTextureRepeat) {
+        this.groundMesh = ground;
+        this.groundTexturePath = path;
+        this.groundTextureRepeat = repeat;
+        const loader = new THREE.TextureLoader();
+        loader.load(
+            path,
+            (groundTexture) => {
+                groundTexture.colorSpace = THREE.SRGBColorSpace;
+                groundTexture.wrapS = THREE.RepeatWrapping;
+                groundTexture.wrapT = THREE.RepeatWrapping;
+                groundTexture.repeat.set(repeat, repeat);
+                const material = new THREE.MeshLambertMaterial({
+                    map: groundTexture,
+                    color: 0xffffff
+                });
+                const oldMaterial = ground.material;
+                ground.material = material;
+                if (Array.isArray(oldMaterial)) {
+                    oldMaterial.forEach((m) => m.dispose());
+                } else {
+                    oldMaterial.dispose();
+                }
+            },
+            undefined,
+            (err) => console.warn("Unable to load ground texture", err)
+        );
+    }
+
+    setGroundTexture(path: string, repeat: number = this.groundTextureRepeat) {
+        if (!this.groundMesh) return;
+        this.applyGroundTexture(this.groundMesh, path, repeat);
+    }
+
+    private setGameplayHudVisible(visible: boolean) {
+        const ids = [
+            "ui-player-health-wrap",
+            "spellbar",
+            "wow-toolbar",
+            "wow-chat",
+            "quest-tracker",
+            "mobile-controller",
+            "modal-character",
+            "modal-spellbook",
+            "modal-talents",
+            "modal-bags",
+            "modal-quests",
+        ];
+        for (const id of ids) {
+            const el = document.getElementById(id);
+            if (!el) continue;
+            el.style.display = visible ? "" : "none";
+        }
+        if (this.enemyBarDiv) this.enemyBarDiv.style.display = visible ? this.enemyBarDiv.style.display : "none";
+    }
+
+    private addTerrainDetailLayers() {
+        for (const mesh of this.terrainDetailMeshes) {
+            this.scene.remove(mesh);
+        }
+        this.terrainDetailMeshes = [];
+
+        const loader = new THREE.TextureLoader();
+        const detailDefs = [
+            { path: "/unity-import/Asset Packs/Terrain Textures/TT_Cracked Soil.png", radius: 120, opacity: 0.22, y: 0.05 },
+            { path: "/unity-import/Asset Packs/Terrain Textures/TT_Cobblestone Floor Dark.png", radius: 62, opacity: 0.18, y: 0.06 },
+            { path: "/unity-import/Asset Packs/Terrain Textures/TT_Cliff.jpg", radius: 42, opacity: 0.16, y: 0.07 },
+        ];
+
+        for (const def of detailDefs) {
+            loader.load(
+                def.path,
+                (tex) => {
+                    tex.colorSpace = THREE.SRGBColorSpace;
+                    tex.wrapS = THREE.RepeatWrapping;
+                    tex.wrapT = THREE.RepeatWrapping;
+                    tex.repeat.set(16, 16);
+                    const mesh = new THREE.Mesh(
+                        new THREE.CircleGeometry(def.radius, 72),
+                        new THREE.MeshBasicMaterial({
+                            map: tex,
+                            transparent: true,
+                            opacity: def.opacity,
+                            depthWrite: false,
+                            side: THREE.DoubleSide,
+                        }),
+                    );
+                    mesh.rotation.x = -Math.PI / 2;
+                    mesh.position.set(0, def.y, 0);
+                    this.scene.add(mesh);
+                    this.terrainDetailMeshes.push(mesh);
+                },
+                undefined,
+                () => {
+                    // optional layer, ignore load errors
+                },
+            );
+        }
+    }
+
+    private ensureSelectionTexture() {
+        if (this.selectionTexture) return;
+        const loader = new THREE.TextureLoader();
+        loader.load(
+            "/unity-import/Game/Textures/Selection/unitselecttexture-full.png",
+            (texture) => {
+                texture.colorSpace = THREE.SRGBColorSpace;
+                this.selectionTexture = texture;
+            },
+            undefined,
+            (err) => console.warn("Unable to load selection texture", err)
+        );
+    }
+
     setupLoginFlow() {
         this.characters = [
             { id: "char-1", name: "Thorin", classId: "warrior", level: 1, gold: 10, inventory: ["training_shield"], equipment: { weapon: "rusty_sword", offhand: "training_shield" } },
             { id: "char-2", name: "Meriel", classId: "mage", level: 1, gold: 10, inventory: ["cloth_gloves"], equipment: { weapon: "apprentice_staff", hands: "cloth_gloves" } },
             { id: "char-3", name: "Shade", classId: "rogue", level: 1, gold: 10, inventory: [], equipment: { weapon: "rogue_daggers" } },
+            { id: "char-4", name: "Sylvanas", classId: "ranger", level: 1, gold: 10, inventory: ["dark_ranger_bow"], equipment: { weapon: "dark_ranger_bow" } },
         ];
         this.buildLoginOverlay();
     }
@@ -828,11 +1076,30 @@ export class Game {
         if (this.player && this.player.mesh) {
             this.scene.remove(this.player.mesh);
         }
+        this.playerLoginLight = null;
         this.enemies.forEach(e => {
             if (e.mesh) this.scene.remove(e.mesh);
             if (e.healthBarDiv) e.healthBarDiv.remove();
         });
         this.enemies = [];
+        this.worldAnimMixers = [];
+        this.sceneObstacles = [];
+        this.clearWorldDecorations();
+        this.worldAssetCache.clear();
+        this.worldDecorPlacements = [];
+        this.editorSoftwareMode = false;
+        this.setGameplayHudVisible(true);
+        this.destroyEditorPanel();
+        this.destroyEditorGizmo();
+        if (this.editorSelectionHelper) {
+            this.scene.remove(this.editorSelectionHelper);
+            this.editorSelectionHelper = null;
+        }
+        this.terrainDetailMeshes.forEach((mesh) => this.scene.remove(mesh));
+        this.terrainDetailMeshes = [];
+        this.groundProbeReady = false;
+        this.clearCollisionDebugRays();
+        if (this.collisionDebugHud) this.collisionDebugHud.style.display = "none";
         // Remove selection ring
         if (this.selectionCircle) {
             this.scene.remove(this.selectionCircle);
@@ -937,6 +1204,55 @@ export class Game {
         title.style.marginBottom = "10px";
         wrap.appendChild(title);
 
+        const editorRow = document.createElement("label");
+        editorRow.style.display = "flex";
+        editorRow.style.alignItems = "center";
+        editorRow.style.gap = "8px";
+        editorRow.style.marginBottom = "10px";
+        editorRow.style.color = "#d8c7a1";
+        editorRow.style.fontSize = "0.92rem";
+        const editorCheckbox = document.createElement("input");
+        editorCheckbox.type = "checkbox";
+        editorCheckbox.checked = this.worldEditorMode;
+        editorCheckbox.onchange = () => {
+            this.worldEditorMode = editorCheckbox.checked;
+        };
+        editorRow.appendChild(editorCheckbox);
+        const editorText = document.createElement("span");
+        editorText.textContent = "World Editor Mode (build/position decorations)";
+        editorRow.appendChild(editorText);
+        wrap.appendChild(editorRow);
+
+        const openEditorBtn = document.createElement("button");
+        openEditorBtn.textContent = "Open World Editor (No Character)";
+        openEditorBtn.style.width = "100%";
+        openEditorBtn.style.marginBottom = "10px";
+        openEditorBtn.style.padding = "9px";
+        openEditorBtn.style.borderRadius = "8px";
+        openEditorBtn.style.border = "1px solid #4a7a9f";
+        openEditorBtn.style.background = "#173046";
+        openEditorBtn.style.color = "#d6ecff";
+        openEditorBtn.style.fontWeight = "800";
+        openEditorBtn.style.cursor = "pointer";
+        openEditorBtn.onclick = () => {
+            const starter = this.getStarterLoadout("warrior");
+            this.currentCharacter = {
+                id: `editor-${Date.now()}`,
+                name: "World Editor",
+                classId: "warrior",
+                level: 1,
+                gold: starter.gold,
+                inventory: starter.inventory,
+                equipment: starter.equipment,
+            };
+            this.worldEditorMode = true;
+            this.editorSoftwareMode = true;
+            overlay.remove();
+            this.characterOverlay = null;
+            this.initWorld();
+        };
+        wrap.appendChild(openEditorBtn);
+
         const list = document.createElement("div");
         list.style.display = "grid";
         list.style.gridTemplateColumns = "1fr 1fr";
@@ -953,6 +1269,8 @@ export class Game {
                 card.innerHTML = `<div style="color:#f6d48b;font-weight:800;">${c.name}</div><div style="color:#d8c7a1;">${c.classId} - Lv ${c.level}</div>`;
                 card.onclick = () => {
                     this.currentCharacter = c;
+                    this.worldEditorMode = editorCheckbox.checked;
+                    this.editorSoftwareMode = false;
                     overlay.remove();
                     this.characterOverlay = null;
                     this.initWorld();
@@ -989,7 +1307,7 @@ export class Game {
         classSelect.style.border = "1px solid #c49a3a";
         classSelect.style.background = "#0f0a07";
         classSelect.style.color = "#f6d48b";
-        ["warrior", "mage", "rogue"].forEach((id) => {
+        ["warrior", "mage", "rogue", "ranger"].forEach((id) => {
             const opt = document.createElement("option");
             opt.value = id;
             opt.textContent = id[0].toUpperCase() + id.slice(1);
@@ -1029,6 +1347,9 @@ export class Game {
         }
         if (classId === "rogue") {
             return { gold: 10, inventory: ["rogue_daggers"], equipment: { weapon: "rogue_daggers" } };
+        }
+        if (classId === "ranger") {
+            return { gold: 10, inventory: ["dark_ranger_bow"], equipment: { weapon: "dark_ranger_bow" } };
         }
         return { gold: 10, inventory: ["rusty_sword", "training_shield"], equipment: { weapon: "rusty_sword", offhand: "training_shield" } };
     }
@@ -1107,7 +1428,7 @@ export class Game {
         }
 
         let target = this.selectedEnemy;
-        if (!target || !target.isAlive()) {
+        if (!target || !target.isAlive() || !target.isEnemy) {
             showSpellMsg("No enemy selected");
             return;
         }
@@ -1135,11 +1456,9 @@ export class Game {
             this.player.mana -= config.cost;
             this.lastCombatTime = performance.now();
             this.player.onSpellCast(config, { inCombat: inCombatBefore });
-            if (isMageSpell) {
-                const castPos = this.player.mesh.position.clone();
-                castPos.y += 1.4;
-                this.fx.spawnMageCast(config.school, castPos);
-            }
+            const castPos = this.player.mesh.position.clone();
+            castPos.y += 1.4;
+            this.fx.spawnSpellCast(config.school, castPos);
         };
 
         if (config.castTime && config.castTime > 0) {
@@ -1164,17 +1483,18 @@ export class Game {
                 this.fx.spawnBurnAura(target.mesh, 1200);
             }
         }
-        if (isMageSpell) {
+        if (config.kind === "ranged" || isMageSpell) {
             const impactPos = target.mesh.position.clone();
             impactPos.y += 1.2;
-            this.fx.spawnMageImpact(config.school, impactPos);
+            this.fx.spawnSpellImpact(config.school, impactPos);
         }
         if (config.kind === "ranged") {
             const origin = this.player.mesh.position.clone();
             origin.y += 1.4;
-            const bolt = this.fx.spawnProjectile(config.projectileColor, origin, target, this.scene);
-            const trail = isMageSpell ? this.fx.spawnMageProjectileTrail(config.school, bolt) : null;
-            this.projectiles.push({ mesh: bolt, target, damage: 0, isCrit: false, speed: 0.3, trail });
+            const bolt = this.fx.spawnProjectile(config.projectileColor, origin, target, this.scene, { school: config.school, spellId: config.id });
+            const trail = this.fx.spawnProjectileTrail(config.school, bolt);
+            const system = new RangedSpellProjectileSystem(bolt, target, 0, { speed: 18, hitDistance: 0.25, targetOffsetY: 1.2 });
+            this.projectiles.push({ mesh: bolt, target, system, trail });
         }
         this.player.onSpellImpact(config, { target, damage: dmg });
     }
@@ -1274,6 +1594,8 @@ export class Game {
         if (this.worldInitialized) return;
         this.worldInitialized = true;
         if (this.loaderDiv) this.loaderDiv.style.display = "flex";
+        this.loadEnvironmentTextures();
+        this.ensureSelectionTexture();
 
         // Initialize Physics (Enable3D)
         try {
@@ -1292,72 +1614,55 @@ export class Game {
 
         // Physics Ground
         if (this.physics) {
-            addGround(this.physics, this.scene);
+            const ground = addGround(this.physics, this.scene, 1000);
+            this.applyGroundTexture(ground);
         } else {
             // Fallback if physics fails (shouldn't happen with correct libs)
-            const ground = new THREE.Mesh(new THREE.PlaneGeometry(1000, 1000), new THREE.MeshStandardMaterial({ color: 0x3f4b2c }));
+            const ground = new THREE.Mesh(new THREE.PlaneGeometry(1000, 1000), new THREE.MeshStandardMaterial({ color: 0xffffff }));
             ground.rotation.x = -Math.PI / 2;
+            this.applyGroundTexture(ground);
             this.scene.add(ground);
         }
+        this.addTerrainDetailLayers();
 
-        // Alberi semplici (leggermente ridotti per FPS)
-        for (let i = 0; i < 140; i++) {
-            const trunk = new THREE.Mesh(
-                new THREE.CylinderGeometry(0.3, 0.5, 3),
-                new THREE.MeshStandardMaterial({ color: 0x8b5a2b })
-            );
-            trunk.position.set(
-                Math.random() * 980 - 490,
-                1.5,
-                Math.random() * 980 - 490
-            );
-            this.scene.add(trunk);
-            this.sceneObstacles.push(trunk);
+        if (!this.useUnityWorldEnvironment) {
+            for (let i = 0; i < 140; i++) {
+                const trunk = new THREE.Mesh(
+                    new THREE.CylinderGeometry(0.3, 0.5, 3),
+                    new THREE.MeshStandardMaterial({ color: 0x8b5a2b })
+                );
+                trunk.position.set(
+                    Math.random() * 980 - 490,
+                    1.5,
+                    Math.random() * 980 - 490
+                );
+                this.scene.add(trunk);
+                this.sceneObstacles.push(trunk);
 
-            const leaves = new THREE.Mesh(
-                new THREE.SphereGeometry(1.2, 12, 12),
-                new THREE.MeshStandardMaterial({ color: 0x228b22 })
-            );
-            leaves.position.set(trunk.position.x, trunk.position.y + 2, trunk.position.z);
-            this.scene.add(leaves);
-            if (i % 20 === 0) await new Promise(r => setTimeout(r, 0));
-        }
+                const leaves = new THREE.Mesh(
+                    new THREE.SphereGeometry(1.2, 12, 12),
+                    new THREE.MeshStandardMaterial({ color: 0x228b22 })
+                );
+                leaves.position.set(trunk.position.x, trunk.position.y + 2, trunk.position.z);
+                this.scene.add(leaves);
+                if (i % 20 === 0) await new Promise(r => setTimeout(r, 0));
+            }
 
-        // Rocce semplici (ridotte per FPS)
-        for (let i = 0; i < 80; i++) {
-            const rock = new THREE.Mesh(
-                new THREE.IcosahedronGeometry(1, 0),
-                new THREE.MeshStandardMaterial({ color: 0x888888 })
-            );
-            rock.position.set(
-                Math.random() * 980 - 490,
-                1,
-                Math.random() * 980 - 490
-            );
-            rock.scale.setScalar(0.6 + Math.random() * 1.2);
-            this.scene.add(rock);
-            this.sceneObstacles.push(rock);
-            if (i % 20 === 0) await new Promise(r => setTimeout(r, 0));
-        }
-
-        // Inserisci qualche asset infernale come decorazione
-        try {
-            const { GLTFLoader } = await import("three/examples/jsm/loaders/GLTFLoader");
-            const decoLoader = new GLTFLoader();
-            decoLoader.load("/inferno_world_free/Separate_assets_glb/TowerBig_001.glb", (gltf) => {
-                gltf.scene.scale.set(0.5, 0.5, 0.5);
-                gltf.scene.position.set(120, 0, 80);
-                gltf.scene.traverse((obj: any) => {
-                    if (obj.isMesh) {
-                        obj.castShadow = true;
-                        obj.receiveShadow = true;
-                    }
-                });
-                this.scene.add(gltf.scene);
-                this.sceneObstacles.push(gltf.scene as any);
-            });
-        } catch (err) {
-            console.warn("Inferno deco load failed", err);
+            for (let i = 0; i < 80; i++) {
+                const rock = new THREE.Mesh(
+                    new THREE.IcosahedronGeometry(1, 0),
+                    new THREE.MeshStandardMaterial({ color: 0x888888 })
+                );
+                rock.position.set(
+                    Math.random() * 980 - 490,
+                    1,
+                    Math.random() * 980 - 490
+                );
+                rock.scale.setScalar(0.6 + Math.random() * 1.2);
+                this.scene.add(rock);
+                this.sceneObstacles.push(rock);
+                if (i % 20 === 0) await new Promise(r => setTimeout(r, 0));
+            }
         }
 
         // Posiziona il player lontano dal nemico e rivolto verso di lui
@@ -1376,6 +1681,8 @@ export class Game {
             this.player = new RoguePlayer();
         } else if (classId === "mage") {
             this.player = new MagePlayer();
+        } else if (classId === "ranger") {
+            this.player = new RangerPlayer();
         } else {
             this.player = new Player(classId);
         }
@@ -1404,8 +1711,22 @@ export class Game {
         const angle = Math.atan2(toEnemy.x, toEnemy.z);
         this.player.mesh.rotation.y = angle;
 
-        this.cameraControl = new ThirdPersonCamera(this.camera, this.player);
+        this.cameraControl = new ThirdPersonCamera(this.camera, this.player, {
+            getCollisionObjects: () => this.sceneObstacles,
+        });
         this.scene.add(this.player.mesh);
+        if (this.editorSoftwareMode) {
+            this.player.mesh.visible = false;
+            this.camera.position.set(this.lastSpawnPosition.x + 0.5, this.lastSpawnPosition.y + 8, this.lastSpawnPosition.z + 12);
+            this.camera.lookAt(this.lastSpawnPosition);
+            const fwd = new THREE.Vector3();
+            this.camera.getWorldDirection(fwd);
+            this.editorCameraYaw = Math.atan2(fwd.x, fwd.z) + Math.PI;
+            this.editorCameraPitch = Math.asin(THREE.MathUtils.clamp(fwd.y, -0.98, 0.98));
+            this.ensureEditorGizmo();
+            this.ensureEditorPanel();
+            if (this.enemyBarDiv) this.enemyBarDiv.style.display = "none";
+        }
 
         // Popola spellbook UI con le spell della classe
         const classSpells = getSpellsForClass(this.player.classId);
@@ -1413,6 +1734,10 @@ export class Game {
         this.ui.populateSpellbook(classSpells.map(s => ({ id: s.id, name: s.name, icon: s.icon, description: s.description })));
         this.ui.populateBags(this.inventory.map(id => getItemById(id)), this.gold);
         this.ui.populateTalents(getTalentsForClass(this.player.classId), this.learnedTalents);
+        if (this.worldEditorMode) {
+            this.ui.addChatMessage("System", "World Editor Mode enabled. Use .editor help");
+        }
+        this.setGameplayHudVisible(!this.editorSoftwareMode);
         const equipObj: Record<string, any> = {};
         const equipIds = this.currentCharacter?.equipment || {};
         Object.keys(equipIds || {}).forEach(slot => {
@@ -1456,54 +1781,40 @@ export class Game {
             window.dispatchEvent(new CustomEvent("spellSlotAssigned", { detail: { slotIndex: idx, spellId: spell.id } }));
         });
 
-        // Carica prefab zombie
-        // Usa GLTFLoader importato
-        const { GLTFLoader } = await import("three/examples/jsm/loaders/GLTFLoader");
-        const gltfLoader = new GLTFLoader();
-        const zombiePrefab = await new Promise<any>((resolve) => {
-            gltfLoader.load(
-                "/characters/zombie/scene.gltf",
-                (gltf) => {
-                    // DEBUG: log struttura prefab
-                    // @ts-ignore
-                    window.zombiePrefabDebug = gltf;
-                    // gltf.scene.scale.set(0.01, 0.01, 0.01); // Spostato nella classe Enemy per evitare zombie gigante
-                    gltf.scene.position.y = -1;
-                    resolve(gltf);
-                }
-            );
-        });
-
-        const loadByExtension = (path: string) => {
-            const ext = path.split(".").pop()?.toLowerCase();
-            const url = encodeURI(path);
-            if (ext === "glb" || ext === "gltf") {
-                return new Promise<any>((resolve) => {
-                    gltfLoader.load(
-                        url,
-                        (gltf) => resolve(gltf),
-                        undefined,
-                        (err) => {
-                            console.error("Failed loading GLTF", url, err);
-                            resolve(null);
-                        }
-                    );
-                });
-            }
-            console.warn("No loader registered for model extension", ext, path);
-            return Promise.resolve(null);
-        };
+        const loadByExtension = (path: string) => loadModelByPath(path);
+        this.loadHiddenWorldModels();
 
         // Carica prefab NPC/enemy da tabella
         const prefabs: Record<string, any> = {};
-        const uniqueModels = Array.from(new Set(Object.values(creatureTemplates).map(t => t.model)));
-        for (const model of uniqueModels) {
-            prefabs[model] = await loadByExtension(model);
+        for (const template of Object.values(creatureTemplates)) {
+            const base = await loadByExtension(template.model);
+            if (!base) {
+                prefabs[template.id] = null;
+                continue;
+            }
+            const extraClips: THREE.AnimationClip[] = [];
+            for (const animPath of template.animationSources ?? []) {
+                const animAsset = await loadByExtension(animPath);
+                if (animAsset?.animations?.length) {
+                    extraClips.push(...animAsset.animations);
+                }
+            }
+            prefabs[template.id] = {
+                ...base,
+                animations: mergeAnimationClips(base.animations ?? [], extraClips),
+            };
         }
         this.creaturePrefabs = prefabs;
 
         // Carica la mappa statica Nature.glb al posto del layout procedurale
         await this.loadWorldMap(loadByExtension);
+        await this.loadUnityDecorations(loadByExtension);
+        this.groundProbeReady = true;
+        this.placeObjectOnGround(this.player.mesh, 0.05, 0.1);
+        if (!this.editorSoftwareMode) {
+            await this.attachLoginLightToPlayer(loadByExtension);
+        }
+        this.lastSpawnPosition.copy(this.player.mesh.position);
 
         // Carica prefab gameobject models
         const gameObjPrefabs: Record<string, any> = {};
@@ -1514,12 +1825,16 @@ export class Game {
         this.gameObjectPrefabs = gameObjPrefabs;
 
         // Costruisci world objects e creature
-        this.spawnGameObjects(gameObjPrefabs);
-        this.spawnCreaturesFromTable(prefabs);
-        this.loadVolatileSpawns();
+        if (!this.useUnityWorldEnvironment && !this.editorSoftwareMode) {
+            this.spawnGameObjects(gameObjPrefabs);
+        }
+        if (!this.editorSoftwareMode) {
+            this.spawnCreaturesFromTable(prefabs);
+            this.loadVolatileSpawns();
+        }
 
         // Auto-accept starter quests
-        if (this.questLog.length === 0) {
+        if (!this.editorSoftwareMode && this.questLog.length === 0) {
             const starterQuests = ["BANDIT_MENACE", "BONES_BE_GONE"];
             starterQuests.forEach(id => {
                 const def = QUESTS[id];
@@ -1581,6 +1896,9 @@ export class Game {
         }
 
         const delta = this.clock.getDelta();
+        for (const mixer of this.worldAnimMixers) {
+            mixer.update(delta);
+        }
 
         if (this.physics) this.physics.update(delta * 1000);
 
@@ -1589,6 +1907,13 @@ export class Game {
             return;
         }
         this.fx.update(delta);
+        if (this.editorSoftwareMode) {
+            const now = performance.now();
+            if (this.dayNightEnabled) this.updateDayNight(now);
+            this.updateEditorCamera(delta);
+            this.renderer.render(this.scene, this.camera);
+            return;
+        }
 
         const realTime = Date.now();
         // Respawn Queue
@@ -1651,16 +1976,7 @@ export class Game {
                 this.scene.remove(p.mesh);
                 return false;
             }
-            const targetPos = p.target.mesh.position.clone();
-            targetPos.y += 1.2;
-            const dir = targetPos.clone().sub(p.mesh.position);
-            const dist = dir.length();
-            dir.normalize();
-            p.mesh.position.addScaledVector(dir, p.speed);
-            if (dist < 0.25) {
-                if (p.damage > 0) {
-                    p.target.takeDamage(p.damage);
-                }
+            if (!p.system.update(delta)) {
                 if (p.trail) this.fx.endEmitter(p.trail);
                 this.scene.remove(p.mesh);
                 return false;
@@ -1779,32 +2095,48 @@ export class Game {
             }
 
             // Cerchio di selezione
-            if (this.selectedEnemy && this.selectedEnemy.isAlive() && this.selectedEnemy.isEnemy) {
+            if (this.selectedEnemy && this.selectedEnemy.isAlive()) {
                 if (!this.selectionCircle) {
-                    const geometry = new THREE.RingGeometry(1.5, 2, 48);
-                    const material = new THREE.MeshBasicMaterial({ color: 0xffd38a, transparent: true, opacity: 0.55, side: THREE.DoubleSide });
+                    const geometry = new THREE.PlaneGeometry(1, 1);
+                    const material = new THREE.MeshBasicMaterial({
+                        map: this.selectionTexture,
+                        color: 0xff5555,
+                        transparent: true,
+                        opacity: 0.9,
+                        alphaTest: 0.1,
+                        side: THREE.DoubleSide
+                    });
                     this.selectionCircle = new THREE.Mesh(geometry, material);
                     this.selectionCircle.rotation.x = -Math.PI / 2;
                     this.selectionCircle.renderOrder = 999;
                     (this.selectionCircle.material as THREE.Material).depthTest = false;
+                    (this.selectionCircle.material as THREE.Material).depthWrite = false;
                     this.scene.add(this.selectionCircle);
                 }
                 // Aggiorna posizione sotto il nemico selezionato
                 // Calcola bounding box reale su tutti i discendenti mesh
                 const box = new THREE.Box3().setFromObject(this.selectedEnemy.mesh, true);
                 const center = new THREE.Vector3();
+                const size = new THREE.Vector3();
                 box.getCenter(center);
+                box.getSize(size);
+                const baseRadius = Math.max(1.2, Math.min(4.2, Math.max(size.x, size.z) * 0.65));
                 this.selectionCircle.position.set(
                     center.x,
                     box.min.y + 0.01,
                     center.z
                 );
                 this.selectionCircle.rotation.set(-Math.PI / 2, 0, 0);
+                this.selectionCircle.scale.set(baseRadius * 2, baseRadius * 2, 1);
                 this.selectionCircle.visible = true;
-                // Debug: colore/materiale ben visibile
+                // Color: red hostile, green friendly
                 if (this.selectionCircle.material instanceof THREE.MeshBasicMaterial) {
-                    this.selectionCircle.material.color.set(0xffd38a);
-                    this.selectionCircle.material.opacity = 0.55;
+                    if (this.selectionTexture && this.selectionCircle.material.map !== this.selectionTexture) {
+                        this.selectionCircle.material.map = this.selectionTexture;
+                        this.selectionCircle.material.needsUpdate = true;
+                    }
+                    this.selectionCircle.material.color.set(this.selectedEnemy.isEnemy ? 0xff3b3b : 0x39d96b);
+                    this.selectionCircle.material.opacity = 0.92;
                 }
             } else if (this.selectionCircle) {
                 this.selectionCircle.visible = false;
@@ -1828,6 +2160,12 @@ export class Game {
 
         // Movimento avanti/indietro
         // Collisione player con ostacoli
+        if (this.collisionDebugEnabled) {
+            this.clearCollisionDebugRays();
+            if (this.collisionDebugHud) {
+                this.collisionDebugHud.textContent = `Collision debug ON | Obstacles: ${this.sceneObstacles.length}`;
+            }
+        }
         const tryMovePlayer = (dir: THREE.Vector3) => {
             const nextPos = this.player.mesh.position.clone().add(dir);
 
@@ -1844,11 +2182,46 @@ export class Game {
 
             // Collisione con ostacoli
             let collision = false;
-            for (const obs of this.sceneObstacles) {
-                const obsBox = new THREE.Box3().setFromObject(obs);
-                if (playerBox.intersectsBox(obsBox)) {
-                    collision = true;
-                    break;
+            if (this.useUnityWorldEnvironment) {
+                const moveLen = dir.length();
+                if (moveLen > 0.00001) {
+                    const moveDir = dir.clone().normalize();
+                    const probeOrigins = [0.25, 1.0, 1.65].map(h =>
+                        new THREE.Vector3(this.player.mesh.position.x, this.player.mesh.position.y + h, this.player.mesh.position.z)
+                    );
+                    const ray = new THREE.Raycaster();
+                    for (const origin of probeOrigins) {
+                        ray.set(origin, moveDir);
+                        ray.far = moveLen + 0.55;
+                        const hits = ray.intersectObjects(this.sceneObstacles as unknown as THREE.Object3D[], true);
+                        let blockingHitDistance: number | null = null;
+                        for (const hit of hits) {
+                            const normalY = this.getIntersectionNormalY(hit as any);
+                            // Ignore walkable floor triangles; keep near-vertical geometry as blockers.
+                            if (normalY > 0.4) continue;
+                            blockingHitDistance = hit.distance;
+                            collision = true;
+                            break;
+                        }
+                        if (this.collisionDebugEnabled) {
+                            this.drawCollisionDebugRay(origin, moveDir, ray.far, blockingHitDistance !== null ? 0xff3b30 : 0x34c759);
+                            if (blockingHitDistance !== null) {
+                                const hitMarkerOrigin = origin.clone().addScaledVector(moveDir, blockingHitDistance);
+                                this.drawCollisionDebugRay(hitMarkerOrigin, new THREE.Vector3(0, 1, 0), 0.25, 0xffcc00);
+                            }
+                        }
+                        if (collision) break;
+                    }
+                }
+            } else {
+                for (const obs of this.sceneObstacles) {
+                    const obsBox = new THREE.Box3().setFromObject(obs);
+                    if (obsBox.max.y < this.player.mesh.position.y + 0.2) continue;
+                    if (obsBox.min.y > this.player.mesh.position.y + 2.5) continue;
+                    if (playerBox.intersectsBox(obsBox)) {
+                        collision = true;
+                        break;
+                    }
                 }
             }
             if (!collision) {
@@ -1859,6 +2232,7 @@ export class Game {
         // Movimento diagonale (w+q, w+e, s+q, s+e)
         let moveDir = new THREE.Vector3();
         let moving = false;
+        let flyVertical = 0;
 
         if (this.keys.has("w")) {
             moveDir.add(cameraDir);
@@ -1877,6 +2251,10 @@ export class Game {
         if (this.keys.has("e")) {
             moveDir.add(leftDir.clone().negate());
             moving = true;
+        }
+        if (this.player.canFly) {
+            if (this.keys.has(" ")) flyVertical += 1;
+            if (this.keys.has("x")) flyVertical -= 1;
         }
 
         // Mouse sinistro+destro: cammina dritto seguendo la camera
@@ -1898,8 +2276,19 @@ export class Game {
         } else {
             this.player.move(this.keys);
         }
+        if (this.player.canFly && flyVertical !== 0) {
+            const flySpeed = this.player.speed * 1.2;
+            this.player.mesh.position.y += flyVertical * flySpeed;
+            const minY = this.player.groundLevel + 0.05;
+            if (this.player.mesh.position.y < minY) {
+                this.player.mesh.position.y = minY;
+            }
+        }
+        if (this.player.canFly && flyVertical !== 0 && !moving && !(this.mouseLeftDown && this.rightMouseDown)) {
+            this.player.setMovementState(true, false);
+        }
         // Movement hooks
-        const isCurrentlyMoving = moving || (this.mouseLeftDown && this.rightMouseDown);
+        const isCurrentlyMoving = moving || (this.mouseLeftDown && this.rightMouseDown) || (this.player.canFly && flyVertical !== 0);
         if (isCurrentlyMoving && !this.playerWasMoving) {
             const dir = moveDir.lengthSq() > 0 ? moveDir.clone().normalize() : new THREE.Vector3(0, 0, 0);
             this.player.onMoveStart(dir);
@@ -1908,6 +2297,22 @@ export class Game {
             this.player.onMoveStop();
         }
         this.playerWasMoving = isCurrentlyMoving;
+        const dynamicGroundY = this.getGroundYAt(
+            this.player.mesh.position.x,
+            this.player.mesh.position.z,
+            this.player.groundLevel - 1,
+            this.player.mesh.position.y
+        );
+        const targetGroundLevel = Math.max(0.1, dynamicGroundY + 1);
+        const maxStepUp = 0.2;
+        const maxStepDown = 0.45;
+        if (targetGroundLevel > this.player.groundLevel + maxStepUp) {
+            this.player.groundLevel += maxStepUp;
+        } else if (targetGroundLevel < this.player.groundLevel - maxStepDown) {
+            this.player.groundLevel -= maxStepDown;
+        } else {
+            this.player.groundLevel = targetGroundLevel;
+        }
         this.player.update(delta);
         // Enemy update loop
         this.enemies.forEach(e => {
@@ -2116,13 +2521,17 @@ export class Game {
     spawnSingleCreature(spawn: CreatureSpawn) {
         const template = creatureTemplates[spawn.templateId];
         if (!template) return;
-        const prefab = this.creaturePrefabs[template.model];
+        const prefab = this.creaturePrefabs[template.id];
         if (!prefab) return;
         const scale = template.scale ?? 0.08;
         const enemy = new Enemy(spawn.position.x, spawn.position.z, prefab, spawn.isEnemy, scale, 0, template.id);
         enemy.mesh.name = template.name;
         enemy.mesh.position.y = spawn.position.y + 1;
-        if (!template.canFly) enemy.mesh.position.y = Math.max(enemy.mesh.position.y, 0.1);
+        if (!template.canFly) {
+            this.placeObjectOnGround(enemy.mesh, 0.05, 0.1);
+        } else {
+            enemy.mesh.position.y = Math.max(enemy.mesh.position.y, 0.1);
+        }
         enemy.maxHp = template.hp;
         enemy.hp = template.hp;
         enemy.xpWorth = template.exp;
@@ -2184,6 +2593,9 @@ export class Game {
                     this.sceneObstacles.push(child);
                 }
             });
+            if (template.model) {
+                this.attachAmbientAnimation(obj, prefabs[template.model]?.animations);
+            }
             this.scene.add(obj);
         });
     }
@@ -2191,12 +2603,16 @@ export class Game {
     spawnVolatileCreature(templateId: string, position: { x: number; y: number; z: number }, orientation: number = 0, register: boolean = true, asEnemy: boolean = true) {
         const template = creatureTemplates[templateId];
         if (!template) return false;
-        const prefab = this.creaturePrefabs[template.model];
+        const prefab = this.creaturePrefabs[template.id];
         if (!prefab) return false;
         const enemy = new Enemy(position.x, position.z, prefab, asEnemy, template.scale ?? 0.08, 0, template.id);
         enemy.mesh.name = template.name;
         enemy.mesh.position.y = position.y + 1;
-        if (!template.canFly) enemy.mesh.position.y = Math.max(enemy.mesh.position.y, 0.1);
+        if (!template.canFly) {
+            this.placeObjectOnGround(enemy.mesh, 0.05, 0.1);
+        } else {
+            enemy.mesh.position.y = Math.max(enemy.mesh.position.y, 0.1);
+        }
         enemy.maxHp = template.hp;
         enemy.hp = template.hp;
         enemy.xpWorth = template.exp;
@@ -2235,6 +2651,9 @@ export class Game {
                 this.sceneObstacles.push(child);
             }
         });
+        if (template.model) {
+            this.attachAmbientAnimation(obj, this.gameObjectPrefabs[template.model]?.animations);
+        }
         this.scene.add(obj);
         if (register) {
             this.volatileSpawns.gameobjects.push({ templateId, position, orientation });
@@ -2262,9 +2681,11 @@ export class Game {
         (this.volatileSpawns.creatures || []).forEach((c: any) => {
             this.spawnVolatileCreature(c.templateId, c.position, c.orientation ?? 0, false, c.isEnemy ?? true);
         });
-        (this.volatileSpawns.gameobjects || []).forEach((g: any) => {
-            this.spawnVolatileGameObject(g.templateId, g.position, g.orientation ?? 0, false);
-        });
+        if (!this.useUnityWorldEnvironment) {
+            (this.volatileSpawns.gameobjects || []).forEach((g: any) => {
+                this.spawnVolatileGameObject(g.templateId, g.position, g.orientation ?? 0, false);
+            });
+        }
     }
 
     generateLootFor(enemy: Enemy): string[] {
@@ -2447,18 +2868,893 @@ export class Game {
     }
 
     async loadWorldMap(loadByExtension: (path: string) => Promise<any>) {
-        const map = await loadByExtension("/environment/maps/Nature.glb");
-        if (map && map.scene) {
-            const mapScene = map.scene.clone(true);
+        this.clearWorldMapInstances();
+        if (this.useUnityWorldEnvironment) {
+            let loadedCount = 0;
+            let attemptedCount = 0;
+            for (const entry of UNITY_WORLD_MODELS) {
+                if (this.hiddenWorldModelIds.has(entry.id)) continue;
+                attemptedCount += 1;
+                const map = await loadByExtension(entry.path);
+                if (!map?.scene) continue;
+                const mapScene = map.scene.clone(true);
+                mapScene.position.set(entry.position.x, entry.position.y, entry.position.z);
+                mapScene.scale.setScalar(entry.scale);
+                mapScene.rotation.y = entry.rotationY ?? 0;
+                const addedObstacles: THREE.Object3D[] = [];
+                mapScene.traverse((child: any) => {
+                    if (child.isMesh) {
+                        child.castShadow = true;
+                        child.receiveShadow = true;
+                        this.sceneObstacles.push(child);
+                        addedObstacles.push(child);
+                    }
+                });
+                this.attachAmbientAnimation(mapScene, map.animations);
+                this.scene.add(mapScene);
+                this.worldMapInstances.push({ id: entry.id, root: mapScene, obstacles: addedObstacles });
+                loadedCount += 1;
+            }
+            if (loadedCount > 0) return;
+            if (attemptedCount === 0) return;
+        }
+
+        const fallbackMap = await loadByExtension("/environment/maps/Nature.glb");
+        if (fallbackMap?.scene) {
+            const mapScene = fallbackMap.scene.clone(true);
+            const addedObstacles: THREE.Object3D[] = [];
             mapScene.traverse((child: any) => {
                 if (child.isMesh) {
                     child.castShadow = true;
                     child.receiveShadow = true;
                     this.sceneObstacles.push(child);
+                    addedObstacles.push(child);
                 }
             });
+            this.attachAmbientAnimation(mapScene, fallbackMap.animations);
             this.scene.add(mapScene);
+            this.worldMapInstances.push({ id: "fallback-map", root: mapScene, obstacles: addedObstacles });
         }
+    }
+
+    clearWorldMapInstances() {
+        for (const inst of this.worldMapInstances) {
+            this.scene.remove(inst.root);
+            if (inst.obstacles.length) {
+                const obstacleSet = new Set(inst.obstacles);
+                this.sceneObstacles = this.sceneObstacles.filter((obs) => !obstacleSet.has(obs));
+            }
+        }
+        this.worldMapInstances = [];
+    }
+
+    private async getCachedAsset(path: string, loadByExtension: (path: string) => Promise<any>) {
+        if (this.worldAssetCache.has(path)) return this.worldAssetCache.get(path);
+        const asset = await loadByExtension(path);
+        this.worldAssetCache.set(path, asset);
+        return asset;
+    }
+
+    clearWorldDecorations() {
+        for (const inst of this.worldDecorInstances) {
+            this.scene.remove(inst.root);
+            if (inst.obstacles.length) {
+                const obstacleSet = new Set(inst.obstacles);
+                this.sceneObstacles = this.sceneObstacles.filter((obs) => !obstacleSet.has(obs));
+            }
+        }
+        this.worldDecorInstances = [];
+        this.editorSelectedDecorRoot = null;
+        if (this.editorSelectionHelper) {
+            this.scene.remove(this.editorSelectionHelper);
+            this.editorSelectionHelper = null;
+        }
+        this.editorSelectedSource = null;
+        this.editorTransformControls?.detach();
+    }
+
+    async spawnUnityDecorationById(
+        decorId: string,
+        loadByExtension: (path: string) => Promise<any>,
+        positionOverride?: { x: number; y: number; z: number },
+        rotationOverride?: number,
+        register: boolean = true,
+        placementRef?: { decorId: string; position: { x: number; y: number; z: number }; rotationY: number },
+    ) {
+        const entry = UNITY_DECOR_BY_ID[decorId];
+        if (!entry) return false;
+        if (!this.useUnityWorldEnvironment) return false;
+
+        const baseAsset = await this.getCachedAsset(entry.path, loadByExtension);
+        if (!baseAsset?.scene) return false;
+        const extraClips: THREE.AnimationClip[] = [];
+        for (const animPath of entry.animationSources ?? []) {
+            const animAsset = await this.getCachedAsset(animPath, loadByExtension);
+            if (animAsset?.animations?.length) extraClips.push(...animAsset.animations);
+        }
+
+        const deco = baseAsset.scene.clone(true);
+        const pos = positionOverride ?? entry.position;
+        deco.position.set(pos.x, pos.y, pos.z);
+        deco.rotation.y = typeof rotationOverride === "number" ? rotationOverride : (entry.rotationY ?? 0);
+        deco.scale.setScalar(entry.scale ?? 1);
+        if (entry.targetHeight && entry.targetHeight > 0) {
+            deco.updateMatrixWorld(true);
+            const sizeBox = new THREE.Box3().setFromObject(deco, true);
+            const currentHeight = Math.max(0.0001, sizeBox.max.y - sizeBox.min.y);
+            deco.scale.multiplyScalar(entry.targetHeight / currentHeight);
+        }
+
+        const addedObstacles: THREE.Object3D[] = [];
+        deco.name = `decor-${entry.id}`;
+        deco.traverse((child: any) => {
+            if (!child.isMesh) return;
+            child.castShadow = true;
+            child.receiveShadow = true;
+            if (entry.collider) {
+                this.sceneObstacles.push(child);
+                addedObstacles.push(child);
+            }
+        });
+
+        this.scene.add(deco);
+        if (entry.placeOnGround) this.placeObjectOnGround(deco, 0.03, 0.1);
+        if (entry.yOffset) deco.position.y += entry.yOffset;
+
+        const mergedClips = mergeAnimationClips(baseAsset.animations ?? [], extraClips);
+        this.attachAmbientAnimation(deco, mergedClips, entry.preferredAnimationKeywords);
+
+        if (entry.light) {
+            const pointLight = new THREE.PointLight(entry.light.color, entry.light.intensity, entry.light.distance);
+            pointLight.position.set(0, entry.light.yOffset ?? 1.8, 0);
+            deco.add(pointLight);
+        }
+
+        let placement = placementRef;
+        if (register) {
+            placement = {
+                decorId: entry.id,
+                position: { x: deco.position.x, y: deco.position.y, z: deco.position.z },
+                rotationY: deco.rotation.y,
+            };
+            this.worldDecorPlacements.push(placement);
+        }
+        this.worldDecorInstances.push({ id: entry.id, root: deco, obstacles: addedObstacles, placement });
+        return true;
+    }
+
+    async loadUnityDecorations(loadByExtension: (path: string) => Promise<any>) {
+        if (!this.useUnityWorldEnvironment) return;
+        this.clearWorldDecorations();
+
+        const saved = this.loadWorldDecorPlacements();
+        if (saved !== null) {
+            for (const row of saved) {
+                await this.spawnUnityDecorationById(row.decorId, loadByExtension, row.position, row.rotationY, false, row);
+            }
+            this.worldDecorPlacements = saved;
+            return;
+        }
+
+        const defaults = UNITY_WORLD_DECORATIONS.filter((d) => d.defaultSpawn);
+        for (const row of defaults) {
+            await this.spawnUnityDecorationById(row.id, loadByExtension, undefined, undefined, true);
+        }
+        this.saveWorldDecorPlacements();
+    }
+
+    saveWorldDecorPlacements() {
+        try {
+            localStorage.setItem("wowts_world_decor_v1", JSON.stringify(this.worldDecorPlacements));
+        } catch (err) {
+            console.warn("Failed to save world decorations", err);
+        }
+    }
+
+    loadWorldDecorPlacements(): { decorId: string; position: { x: number; y: number; z: number }; rotationY: number }[] | null {
+        try {
+            const raw = localStorage.getItem("wowts_world_decor_v1");
+            if (!raw) return null;
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) return parsed;
+        } catch (err) {
+            console.warn("Failed to load world decorations", err);
+        }
+        return null;
+    }
+
+    saveHiddenWorldModels() {
+        try {
+            localStorage.setItem("wowts_hidden_world_models_v1", JSON.stringify(Array.from(this.hiddenWorldModelIds)));
+        } catch (err) {
+            console.warn("Failed to save hidden world models", err);
+        }
+    }
+
+    loadHiddenWorldModels() {
+        try {
+            const raw = localStorage.getItem("wowts_hidden_world_models_v1");
+            if (!raw) return;
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+                this.hiddenWorldModelIds = new Set(parsed.filter((v) => typeof v === "string"));
+            }
+        } catch (err) {
+            console.warn("Failed to load hidden world models", err);
+        }
+    }
+
+    private createEditorSnapshot() {
+        return {
+            decor: this.worldDecorPlacements.map((d) => ({
+                decorId: d.decorId,
+                position: { x: d.position.x, y: d.position.y, z: d.position.z },
+                rotationY: d.rotationY,
+            })),
+            hiddenMapIds: Array.from(this.hiddenWorldModelIds),
+        };
+    }
+
+    private snapshotEquals(
+        a: { decor: { decorId: string; position: { x: number; y: number; z: number }; rotationY: number }[]; hiddenMapIds: string[] } | null,
+        b: { decor: { decorId: string; position: { x: number; y: number; z: number }; rotationY: number }[]; hiddenMapIds: string[] } | null,
+    ) {
+        if (!a || !b) return false;
+        return JSON.stringify(a) === JSON.stringify(b);
+    }
+
+    private pushUndoSnapshot() {
+        const snap = this.createEditorSnapshot();
+        const top = this.editorUndoStack[this.editorUndoStack.length - 1] ?? null;
+        if (!this.snapshotEquals(top, snap)) {
+            this.editorUndoStack.push(snap);
+            if (this.editorUndoStack.length > 80) {
+                this.editorUndoStack.splice(0, this.editorUndoStack.length - 80);
+            }
+        }
+        this.editorRedoStack = [];
+    }
+
+    private async applyEditorSnapshot(snapshot: { decor: { decorId: string; position: { x: number; y: number; z: number }; rotationY: number }[]; hiddenMapIds: string[] }) {
+        this.worldDecorPlacements = snapshot.decor.map((d) => ({
+            decorId: d.decorId,
+            position: { x: d.position.x, y: d.position.y, z: d.position.z },
+            rotationY: d.rotationY,
+        }));
+        this.hiddenWorldModelIds = new Set(snapshot.hiddenMapIds);
+        this.saveWorldDecorPlacements();
+        this.saveHiddenWorldModels();
+        const loadByExtension = (path: string) => loadModelByPath(path);
+        await this.loadWorldMap(loadByExtension);
+        await this.loadUnityDecorations(loadByExtension);
+        this.applyEditorSelection(null, null);
+    }
+
+    setWorldEditorMode(enabled: boolean) {
+        this.worldEditorMode = enabled;
+        this.ui?.addChatMessage("System", enabled ? "World editor mode ON." : "World editor mode OFF.");
+        if (this.editorSoftwareMode && enabled) {
+            this.setGameplayHudVisible(false);
+            this.ensureEditorGizmo();
+            this.ensureEditorPanel();
+        } else if (this.editorSoftwareMode && !enabled) {
+            this.setGameplayHudVisible(true);
+            this.destroyEditorPanel();
+            this.destroyEditorGizmo();
+        }
+    }
+
+    async editorPlaceDecoration(decorId: string) {
+        if (!this.worldEditorMode) {
+            this.ui?.addChatMessage("System", "Enable editor first: .editor on");
+            return false;
+        }
+        this.pushUndoSnapshot();
+        const loadByExtension = (path: string) => loadModelByPath(path);
+        const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion).setY(0).normalize();
+        const pos = this.camera.position.clone().addScaledVector(forward, 6);
+        const ok = await this.spawnUnityDecorationById(
+            decorId,
+            loadByExtension,
+            { x: pos.x, y: pos.y, z: pos.z },
+            this.camera.rotation.y,
+            true,
+        );
+        if (ok) {
+            this.saveWorldDecorPlacements();
+            this.ui?.addChatMessage("System", `Placed decor '${decorId}'.`);
+        } else {
+            this.ui?.addChatMessage("System", `Decor id '${decorId}' not found.`);
+        }
+        return ok;
+    }
+
+    editorClearDecorations() {
+        if (!this.worldEditorMode) {
+            this.ui?.addChatMessage("System", "Enable editor first: .editor on");
+            return;
+        }
+        this.pushUndoSnapshot();
+        this.clearWorldDecorations();
+        this.worldDecorPlacements = [];
+        this.saveWorldDecorPlacements();
+        this.ui?.addChatMessage("System", "All world decorations cleared.");
+    }
+
+    async editorResetDecorationsToDefaults() {
+        if (!this.worldEditorMode) {
+            this.ui?.addChatMessage("System", "Enable editor first: .editor on");
+            return;
+        }
+        this.pushUndoSnapshot();
+        const loadByExtension = (path: string) => loadModelByPath(path);
+        this.clearWorldDecorations();
+        this.worldDecorPlacements = [];
+        for (const row of UNITY_WORLD_DECORATIONS.filter((d) => d.defaultSpawn)) {
+            await this.spawnUnityDecorationById(row.id, loadByExtension, undefined, undefined, true);
+        }
+        this.saveWorldDecorPlacements();
+        this.ui?.addChatMessage("System", "Decorations reset to default layout.");
+    }
+
+    async reloadWorldDecorations() {
+        const loadByExtension = (path: string) => loadModelByPath(path);
+        await this.loadUnityDecorations(loadByExtension);
+    }
+
+    private getPlacementPointFromScreen(clientX: number, clientY: number) {
+        const rect = this.renderer.domElement.getBoundingClientRect();
+        const ndc = new THREE.Vector2(
+            ((clientX - rect.left) / rect.width) * 2 - 1,
+            -((clientY - rect.top) / rect.height) * 2 + 1,
+        );
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(ndc, this.camera);
+        const hits = raycaster.intersectObjects(this.sceneObstacles as unknown as THREE.Object3D[], true);
+        if (hits.length) {
+            const best = hits.find((h) => this.getIntersectionNormalY(h as any) > 0.45) ?? hits[0];
+            return best.point.clone();
+        }
+        const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+        const fallback = new THREE.Vector3();
+        if (raycaster.ray.intersectPlane(plane, fallback)) return fallback;
+        return null;
+    }
+
+    async editorPlaceDecorationAtScreen(decorId: string, clientX: number, clientY: number) {
+        if (!this.worldEditorMode) return false;
+        const point = this.getPlacementPointFromScreen(clientX, clientY);
+        if (!point) return false;
+        this.pushUndoSnapshot();
+        const loadByExtension = (path: string) => loadModelByPath(path);
+        const ok = await this.spawnUnityDecorationById(
+            decorId,
+            loadByExtension,
+            { x: point.x, y: point.y, z: point.z },
+            this.editorCameraYaw,
+            true,
+        );
+        if (ok) {
+            this.saveWorldDecorPlacements();
+        }
+        return ok;
+    }
+
+    selectEditorDecorationAtScreen(clientX: number, clientY: number) {
+        if (!this.editorSoftwareMode) return;
+        const rect = this.renderer.domElement.getBoundingClientRect();
+        const ndc = new THREE.Vector2(
+            ((clientX - rect.left) / rect.width) * 2 - 1,
+            -((clientY - rect.top) / rect.height) * 2 + 1,
+        );
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(ndc, this.camera);
+        let bestDecor: { root: THREE.Object3D; distance: number } | null = null;
+        let bestMap: { root: THREE.Object3D; distance: number } | null = null;
+        for (const inst of this.worldDecorInstances) {
+            const hits = raycaster.intersectObject(inst.root, true);
+            if (!hits.length) continue;
+            if (!bestDecor || hits[0].distance < bestDecor.distance) {
+                bestDecor = { root: inst.root, distance: hits[0].distance };
+            }
+        }
+        for (const inst of this.worldMapInstances) {
+            const hits = raycaster.intersectObject(inst.root, true);
+            if (!hits.length) continue;
+            if (!bestMap || hits[0].distance < bestMap.distance) {
+                bestMap = { root: inst.root, distance: hits[0].distance };
+            }
+        }
+        const best =
+            bestDecor
+                ? { root: bestDecor.root, source: "decor" as const }
+                : bestMap
+                    ? { root: bestMap.root, source: "map" as const }
+                    : null;
+        this.applyEditorSelection(best?.root ?? null, best?.source ?? null);
+    }
+
+    removeSelectedEditorDecoration() {
+        if (!this.editorSoftwareMode || !this.editorSelectedDecorRoot) return;
+        this.pushUndoSnapshot();
+        if (this.editorSelectedSource === "decor") {
+            const idx = this.worldDecorInstances.findIndex((i) => i.root === this.editorSelectedDecorRoot);
+            if (idx < 0) return;
+            const inst = this.worldDecorInstances[idx];
+            this.scene.remove(inst.root);
+            const obstacleSet = new Set(inst.obstacles);
+            this.sceneObstacles = this.sceneObstacles.filter((obs) => !obstacleSet.has(obs));
+            this.worldDecorInstances.splice(idx, 1);
+            if (inst.placement) {
+                const pIdx = this.worldDecorPlacements.indexOf(inst.placement);
+                if (pIdx >= 0) this.worldDecorPlacements.splice(pIdx, 1);
+            }
+            this.saveWorldDecorPlacements();
+        } else if (this.editorSelectedSource === "map") {
+            const idx = this.worldMapInstances.findIndex((i) => i.root === this.editorSelectedDecorRoot);
+            if (idx < 0) return;
+            const inst = this.worldMapInstances[idx];
+            this.scene.remove(inst.root);
+            const obstacleSet = new Set(inst.obstacles);
+            this.sceneObstacles = this.sceneObstacles.filter((obs) => !obstacleSet.has(obs));
+            this.worldMapInstances.splice(idx, 1);
+            this.hiddenWorldModelIds.add(inst.id);
+            this.saveHiddenWorldModels();
+        }
+
+        if (this.editorSelectionHelper) {
+            this.scene.remove(this.editorSelectionHelper);
+            this.editorSelectionHelper = null;
+        }
+        this.editorSelectedDecorRoot = null;
+        this.editorSelectedSource = null;
+        this.editorTransformControls?.detach();
+    }
+
+    async editorDuplicateSelection() {
+        if (!this.editorSelectedDecorRoot || this.editorSelectedSource !== "decor") return;
+        const inst = this.worldDecorInstances.find((i) => i.root === this.editorSelectedDecorRoot);
+        if (!inst) return;
+        this.pushUndoSnapshot();
+        const loadByExtension = (path: string) => loadModelByPath(path);
+        const pos = inst.root.position.clone().add(new THREE.Vector3(1.2, 0, 1.2));
+        const ok = await this.spawnUnityDecorationById(
+            inst.id,
+            loadByExtension,
+            { x: pos.x, y: pos.y, z: pos.z },
+            inst.root.rotation.y,
+            true,
+        );
+        if (ok) this.saveWorldDecorPlacements();
+    }
+
+    async editorUndo() {
+        if (!this.editorUndoStack.length) return;
+        const current = this.createEditorSnapshot();
+        const snapshot = this.editorUndoStack.pop()!;
+        this.editorRedoStack.push(current);
+        await this.applyEditorSnapshot(snapshot);
+    }
+
+    async editorRedo() {
+        if (!this.editorRedoStack.length) return;
+        const current = this.createEditorSnapshot();
+        const snapshot = this.editorRedoStack.pop()!;
+        this.editorUndoStack.push(current);
+        await this.applyEditorSnapshot(snapshot);
+    }
+
+    updateEditorCamera(delta: number) {
+        if (this.editorGizmoDragging) return;
+        if (!this.editorRightMouseDown) return;
+        const speed = this.keys.has("shift") ? this.editorCameraSpeed * 2.4 : this.editorCameraSpeed;
+        const move = new THREE.Vector3();
+        const forward = new THREE.Vector3(Math.sin(this.editorCameraYaw), 0, Math.cos(this.editorCameraYaw)).negate();
+        const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+
+        if (this.keys.has("w")) move.add(forward);
+        if (this.keys.has("s")) move.add(forward.clone().negate());
+        if (this.keys.has("a")) move.add(right.clone().negate());
+        if (this.keys.has("d")) move.add(right);
+        if (this.keys.has("q")) move.y += 1;
+        if (this.keys.has("e")) move.y -= 1;
+
+        if (move.lengthSq() > 0) {
+            move.normalize().multiplyScalar(speed * delta);
+            this.camera.position.add(move);
+        }
+
+        this.camera.rotation.order = "YXZ";
+        this.camera.rotation.y = this.editorCameraYaw;
+        this.camera.rotation.x = this.editorCameraPitch;
+        if (this.editorSelectionHelper) this.editorSelectionHelper.update();
+    }
+
+    destroyEditorPanel() {
+        if (this.editorPanel) {
+            this.editorPanel.remove();
+            this.editorPanel = null;
+        }
+    }
+
+    ensureEditorGizmo() {
+        if (this.editorTransformControls) return;
+        const controls = new TransformControls(this.camera, this.renderer.domElement);
+        controls.setMode(this.editorTransformMode);
+        controls.setSize(1.15);
+        controls.enabled = true;
+        controls.setSpace(this.editorTransformSpace);
+        controls.setTranslationSnap(this.editorSnapEnabled ? this.editorTranslationSnap : null);
+        controls.setRotationSnap(this.editorSnapEnabled ? THREE.MathUtils.degToRad(this.editorRotationSnapDeg) : null);
+        controls.setScaleSnap(this.editorSnapEnabled ? this.editorScaleSnap : null);
+        controls.addEventListener("dragging-changed", (e: any) => {
+            this.editorGizmoDragging = !!e.value;
+            if (e.value) {
+                this.editorDragStartSnapshot = this.createEditorSnapshot();
+            } else {
+                const after = this.createEditorSnapshot();
+                if (!this.snapshotEquals(this.editorDragStartSnapshot, after) && this.editorDragStartSnapshot) {
+                    this.editorUndoStack.push(this.editorDragStartSnapshot);
+                    if (this.editorUndoStack.length > 80) {
+                        this.editorUndoStack.splice(0, this.editorUndoStack.length - 80);
+                    }
+                    this.editorRedoStack = [];
+                }
+                this.editorDragStartSnapshot = null;
+            }
+        });
+        controls.addEventListener("objectChange", () => {
+            if (this.editorSelectionHelper) this.editorSelectionHelper.update();
+            if (this.editorSelectedSource === "decor" && this.editorSelectedDecorRoot) {
+                const inst = this.worldDecorInstances.find((i) => i.root === this.editorSelectedDecorRoot);
+                if (inst?.placement) {
+                    inst.placement.position.x = inst.root.position.x;
+                    inst.placement.position.y = inst.root.position.y;
+                    inst.placement.position.z = inst.root.position.z;
+                    inst.placement.rotationY = inst.root.rotation.y;
+                    this.saveWorldDecorPlacements();
+                }
+            }
+        });
+        const helper = (controls as any).getHelper?.() as THREE.Object3D | undefined;
+        this.editorTransformHelper = helper ?? controls;
+        this.scene.add(controls);
+        this.scene.add(this.editorTransformHelper);
+        this.editorTransformControls = controls;
+    }
+
+    destroyEditorGizmo() {
+        if (!this.editorTransformControls) return;
+        if (this.editorTransformHelper) this.scene.remove(this.editorTransformHelper);
+        this.editorTransformControls.dispose();
+        this.editorTransformControls = null;
+        this.editorTransformHelper = null;
+        this.editorGizmoDragging = false;
+    }
+
+    editorSetTransformMode(mode: "translate" | "rotate" | "scale") {
+        this.editorTransformMode = mode;
+        this.editorTransformControls?.setMode(mode);
+    }
+
+    editorSetTransformSpace(space: "local" | "world") {
+        this.editorTransformSpace = space;
+        this.editorTransformControls?.setSpace(space);
+    }
+
+    editorSetSnapEnabled(enabled: boolean) {
+        this.editorSnapEnabled = enabled;
+        this.applyEditorSnapSettings();
+    }
+
+    editorSetSnapValues(translate: number, rotateDeg: number, scale: number) {
+        this.editorTranslationSnap = Math.max(0.001, translate);
+        this.editorRotationSnapDeg = Math.max(0.1, rotateDeg);
+        this.editorScaleSnap = Math.max(0.001, scale);
+        this.applyEditorSnapSettings();
+    }
+
+    private applyEditorSnapSettings() {
+        if (!this.editorTransformControls) return;
+        this.editorTransformControls.setTranslationSnap(this.editorSnapEnabled ? this.editorTranslationSnap : null);
+        this.editorTransformControls.setRotationSnap(this.editorSnapEnabled ? THREE.MathUtils.degToRad(this.editorRotationSnapDeg) : null);
+        this.editorTransformControls.setScaleSnap(this.editorSnapEnabled ? this.editorScaleSnap : null);
+    }
+
+    getEditorHierarchyEntries() {
+        const decor = this.worldDecorInstances.map((inst, idx) => ({
+            objectId: inst.root.uuid,
+            source: "decor" as const,
+            label: `Decor/${inst.id}#${idx + 1}`,
+        }));
+        const map = this.worldMapInstances.map((inst) => ({
+            objectId: inst.root.uuid,
+            source: "map" as const,
+            label: `Map/${inst.id}`,
+        }));
+        return [...decor, ...map];
+    }
+
+    getEditorSelectedObjectId() {
+        return this.editorSelectedDecorRoot?.uuid ?? null;
+    }
+
+    getEditorSelectedLabel() {
+        if (!this.editorSelectedDecorRoot || !this.editorSelectedSource) return null;
+        if (this.editorSelectedSource === "decor") {
+            const inst = this.worldDecorInstances.find((i) => i.root === this.editorSelectedDecorRoot);
+            return inst ? `Decor/${inst.id}` : "Decor";
+        }
+        const inst = this.worldMapInstances.find((i) => i.root === this.editorSelectedDecorRoot);
+        return inst ? `Map/${inst.id}` : "Map";
+    }
+
+    getEditorSelectedSource() {
+        return this.editorSelectedSource;
+    }
+
+    selectEditorObjectById(objectId: string) {
+        const decor = this.worldDecorInstances.find((i) => i.root.uuid === objectId);
+        if (decor) {
+            this.applyEditorSelection(decor.root, "decor");
+            return true;
+        }
+        const map = this.worldMapInstances.find((i) => i.root.uuid === objectId);
+        if (map) {
+            this.applyEditorSelection(map.root, "map");
+            return true;
+        }
+        return false;
+    }
+
+    getEditorSelectionTransform() {
+        const o = this.editorSelectedDecorRoot;
+        if (!o) return null;
+        return {
+            position: { x: o.position.x, y: o.position.y, z: o.position.z },
+            rotation: {
+                x: THREE.MathUtils.radToDeg(o.rotation.x),
+                y: THREE.MathUtils.radToDeg(o.rotation.y),
+                z: THREE.MathUtils.radToDeg(o.rotation.z),
+            },
+            scale: { x: o.scale.x, y: o.scale.y, z: o.scale.z },
+        };
+    }
+
+    setEditorSelectionTransform(values: Partial<{
+        position: Partial<{ x: number; y: number; z: number }>;
+        rotation: Partial<{ x: number; y: number; z: number }>;
+        scale: Partial<{ x: number; y: number; z: number }>;
+    }>) {
+        const o = this.editorSelectedDecorRoot;
+        if (!o) return false;
+        if (values.position) {
+            if (typeof values.position.x === "number") o.position.x = values.position.x;
+            if (typeof values.position.y === "number") o.position.y = values.position.y;
+            if (typeof values.position.z === "number") o.position.z = values.position.z;
+        }
+        if (values.rotation) {
+            if (typeof values.rotation.x === "number") o.rotation.x = THREE.MathUtils.degToRad(values.rotation.x);
+            if (typeof values.rotation.y === "number") o.rotation.y = THREE.MathUtils.degToRad(values.rotation.y);
+            if (typeof values.rotation.z === "number") o.rotation.z = THREE.MathUtils.degToRad(values.rotation.z);
+        }
+        if (values.scale) {
+            if (typeof values.scale.x === "number") o.scale.x = Math.max(0.0001, values.scale.x);
+            if (typeof values.scale.y === "number") o.scale.y = Math.max(0.0001, values.scale.y);
+            if (typeof values.scale.z === "number") o.scale.z = Math.max(0.0001, values.scale.z);
+        }
+        if (this.editorSelectionHelper) this.editorSelectionHelper.update();
+        if (this.editorSelectedSource === "decor") {
+            const inst = this.worldDecorInstances.find((i) => i.root === o);
+            if (inst?.placement) {
+                inst.placement.position.x = o.position.x;
+                inst.placement.position.y = o.position.y;
+                inst.placement.position.z = o.position.z;
+                inst.placement.rotationY = o.rotation.y;
+                this.saveWorldDecorPlacements();
+            }
+        }
+        return true;
+    }
+
+    editorFocusSelection() {
+        const o = this.editorSelectedDecorRoot;
+        if (!o) return;
+        const box = new THREE.Box3().setFromObject(o, true);
+        const center = new THREE.Vector3();
+        const size = new THREE.Vector3();
+        box.getCenter(center);
+        box.getSize(size);
+        const distance = Math.max(6, Math.max(size.x, size.y, size.z) * 2.2);
+        const dir = new THREE.Vector3(0, 0.2, 1).normalize();
+        this.camera.position.copy(center.clone().addScaledVector(dir, distance));
+        this.camera.lookAt(center);
+        const fwd = new THREE.Vector3();
+        this.camera.getWorldDirection(fwd);
+        this.editorCameraYaw = Math.atan2(fwd.x, fwd.z) + Math.PI;
+        this.editorCameraPitch = Math.asin(THREE.MathUtils.clamp(fwd.y, -0.98, 0.98));
+    }
+
+    private applyEditorSelection(target: THREE.Object3D | null, source: "decor" | "map" | null) {
+        if (this.editorSelectionHelper) {
+            this.scene.remove(this.editorSelectionHelper);
+            this.editorSelectionHelper = null;
+        }
+        this.editorSelectedDecorRoot = null;
+        this.editorSelectedSource = null;
+        if (!target || !source) {
+            this.editorTransformControls?.detach();
+            return;
+        }
+        const helper = new THREE.BoxHelper(target, 0x5ee8ff);
+        this.scene.add(helper);
+        this.editorSelectionHelper = helper;
+        this.editorSelectedDecorRoot = target;
+        this.editorSelectedSource = source;
+        this.ensureEditorGizmo();
+        this.editorTransformControls?.attach(target);
+        this.editorTransformControls?.setMode(this.editorTransformMode);
+    }
+
+    async editorUnhideAllWorldModels() {
+        this.pushUndoSnapshot();
+        this.hiddenWorldModelIds.clear();
+        this.saveHiddenWorldModels();
+        const loadByExtension = (path: string) => loadModelByPath(path);
+        await this.loadWorldMap(loadByExtension);
+    }
+
+    ensureEditorPanel() {
+        if (this.editorPanel || !this.editorSoftwareMode) return;
+        this.editorPanel = createWorldEditorPanel(this);
+        document.body.appendChild(this.editorPanel);
+    }
+
+    async attachLoginLightToPlayer(loadByExtension: (path: string) => Promise<any>) {
+        if (!this.player?.mesh) return;
+        if (this.playerLoginLight) {
+            this.playerLoginLight.removeFromParent();
+            this.playerLoginLight = null;
+        }
+
+        const basePath = "/unity-import/Game/Models/LoginLight/loginlight.fbx";
+        const animPath = "/unity-import/Game/Models/LoginLight/loginlight_Animations/loginlight_Stand_0.fbx";
+        const baseAsset = await loadByExtension(basePath);
+        if (!baseAsset?.scene) return;
+        const animAsset = await loadByExtension(animPath);
+        const clips = mergeAnimationClips(baseAsset.animations ?? [], animAsset?.animations ?? []);
+
+        const loginLight = baseAsset.scene.clone(true);
+        loginLight.name = "player-login-light";
+        loginLight.scale.setScalar(0.018);
+        loginLight.position.set(0, 2.15, 0);
+        loginLight.rotation.y = Math.PI;
+        loginLight.traverse((child: any) => {
+            if (!child.isMesh) return;
+            child.castShadow = false;
+            child.receiveShadow = false;
+        });
+        this.player.mesh.add(loginLight);
+        this.playerLoginLight = loginLight;
+        this.attachAmbientAnimation(loginLight, clips, ["stand"]);
+
+        const pointLight = new THREE.PointLight(0xf6d48b, 0.75, 9);
+        pointLight.position.set(0, 0.8, 0);
+        loginLight.add(pointLight);
+    }
+
+    getGroundYAt(x: number, z: number, fallbackY: number = 0, referenceY?: number): number {
+        if (!this.sceneObstacles.length) return fallbackY;
+        this.groundRaycaster.set(new THREE.Vector3(x, 2500, z), new THREE.Vector3(0, -1, 0));
+        this.groundRaycaster.far = 5000;
+        const hits = this.groundRaycaster.intersectObjects(this.sceneObstacles as unknown as THREE.Object3D[], true);
+        if (!hits.length) return fallbackY;
+        const refY = typeof referenceY === "number" ? referenceY : fallbackY;
+        let firstWalkable: number | null = null;
+        let nearWalkable: number | null = null;
+        for (const hit of hits) {
+            const normalY = this.getIntersectionNormalY(hit as any);
+            // Keep only mostly-upward surfaces as walkable ground.
+            if (normalY < 0.55) continue;
+            if (firstWalkable === null) firstWalkable = hit.point.y;
+            // Prefer walkable surface near the actor current height to avoid snapping to roofs/bridges.
+            if (hit.point.y <= refY + 0.6) {
+                nearWalkable = nearWalkable === null ? hit.point.y : Math.max(nearWalkable, hit.point.y);
+            }
+        }
+        if (nearWalkable !== null) return nearWalkable;
+        if (firstWalkable !== null) return firstWalkable;
+        return fallbackY;
+    }
+
+    placeObjectOnGround(object: THREE.Object3D, clearance: number = 0.05, minY: number = 0.1) {
+        const originalY = object.position.y;
+        const groundY = this.getGroundYAt(object.position.x, object.position.z, originalY);
+        object.position.y = groundY;
+        object.updateMatrixWorld(true);
+
+        const box = new THREE.Box3().setFromObject(object, true);
+        const bottomY = box.min.y;
+        const correction = groundY - bottomY + clearance;
+        const nextY = object.position.y + correction;
+        object.position.y = Number.isFinite(nextY) ? Math.max(minY, nextY) : Math.max(minY, originalY);
+    }
+
+    getIntersectionNormalY(hit: any): number {
+        if (!hit?.face?.normal || !hit?.object) return 1;
+        const worldNormal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
+        return worldNormal.y;
+    }
+
+    setCollisionDebugEnabled(enabled: boolean) {
+        this.collisionDebugEnabled = enabled;
+        if (enabled) {
+            if (!this.collisionDebugHud) {
+                const hud = document.createElement("div");
+                hud.id = "collision-debug-hud";
+                hud.style.position = "fixed";
+                hud.style.top = "8px";
+                hud.style.left = "8px";
+                hud.style.padding = "8px 10px";
+                hud.style.background = "rgba(0,0,0,0.7)";
+                hud.style.color = "#7fff8a";
+                hud.style.fontFamily = "monospace";
+                hud.style.fontSize = "12px";
+                hud.style.border = "1px solid #2a8f45";
+                hud.style.borderRadius = "6px";
+                hud.style.zIndex = "100100";
+                hud.style.pointerEvents = "none";
+                document.body.appendChild(hud);
+                this.collisionDebugHud = hud;
+            }
+            if (this.collisionDebugHud) this.collisionDebugHud.style.display = "block";
+        } else {
+            this.clearCollisionDebugRays();
+            if (this.collisionDebugHud) this.collisionDebugHud.style.display = "none";
+        }
+    }
+
+    clearCollisionDebugRays() {
+        for (const obj of this.collisionDebugRays) {
+            this.scene.remove(obj);
+        }
+        this.collisionDebugRays = [];
+    }
+
+    drawCollisionDebugRay(origin: THREE.Vector3, direction: THREE.Vector3, length: number, color: number) {
+        const end = origin.clone().addScaledVector(direction, Math.max(0.02, length));
+        const geometry = new THREE.BufferGeometry().setFromPoints([origin, end]);
+        const material = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.95 });
+        const line = new THREE.Line(geometry, material);
+        this.scene.add(line);
+        this.collisionDebugRays.push(line);
+    }
+
+    attachAmbientAnimation(root: THREE.Object3D, clips?: THREE.AnimationClip[], preferredKeywords: string[] = []) {
+        if (!clips || clips.length === 0) return;
+        const mixer = new THREE.AnimationMixer(root);
+        const preferred = preferredKeywords
+            .map((keyword) => clips.find((c) => c.name.toLowerCase().includes(keyword.toLowerCase())))
+            .find((c) => !!c);
+        if (preferred) {
+            const action = mixer.clipAction(preferred);
+            action.play();
+            this.worldAnimMixers.push(mixer);
+            return;
+        }
+        const profile = inferClipMapFromAnimations(clips);
+        const firstAttack = Array.isArray(profile.attack) ? profile.attack[0] : profile.attack;
+        const clipName =
+            profile.idle ||
+            profile.walk ||
+            profile.run ||
+            profile.cast ||
+            firstAttack ||
+            clips[0].name;
+        const clip = clips.find((c) => c.name === clipName) ?? clips[0];
+        const action = mixer.clipAction(clip);
+        action.play();
+        this.worldAnimMixers.push(mixer);
     }
 
     updateDayNight(now: number) {
@@ -2482,7 +3778,9 @@ export class Game {
         const sky = isNight ? 0x243043 : 0x1f2a38;
         const fogNear = isNight ? 18 : 25;
         const fogFar = isNight ? 200 : 180;
-        this.scene.background = new THREE.Color(sky);
+        if (!this.skyTextureActive) {
+            this.scene.background = new THREE.Color(sky);
+        }
         this.scene.fog = new THREE.Fog(sky, fogNear, fogFar);
     }
 

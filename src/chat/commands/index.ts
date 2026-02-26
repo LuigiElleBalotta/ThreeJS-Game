@@ -7,8 +7,10 @@ import { flyCommand } from "./fly";
 import { moveHereCommand } from "./moveHere";
 import { dayNightCommand } from "./daynight";
 import { hasScriptCommand } from "./hasScript";
+import { showCollisionRaysCommand } from "./showCollisionRays";
+import { worldEditorCommand } from "./worldEditor";
 
-export type ChatCommandHandler = (args: string[], ctx: { game: Game }) => void;
+export type ChatCommandHandler = (args: string[], ctx: { game: Game }) => void | Promise<void>;
 
 const commands: Record<string, ChatCommandHandler> = {
   editscale: editScale,
@@ -19,6 +21,10 @@ const commands: Record<string, ChatCommandHandler> = {
   movehere: moveHereCommand,
   daynight: dayNightCommand,
   hasscript: hasScriptCommand,
+  showcollisionrays: showCollisionRaysCommand,
+  collisionrays: showCollisionRaysCommand,
+  editor: worldEditorCommand,
+  worldeditor: worldEditorCommand,
 };
 
 export function handleChatCommand(raw: string, ctx: { game: Game }): boolean {
@@ -30,7 +36,12 @@ export function handleChatCommand(raw: string, ctx: { game: Game }): boolean {
   const handler = commands[name];
   if (!handler) return false;
   try {
-    handler(args, ctx);
+    const result = handler(args, ctx);
+    if (result && typeof (result as Promise<void>).catch === "function") {
+      (result as Promise<void>).catch((err: any) => {
+        ctx.game.ui?.addChatMessage("System", `Command error: ${err?.message || err}`);
+      });
+    }
   } catch (err: any) {
     ctx.game.ui?.addChatMessage("System", `Command error: ${err?.message || err}`);
   }

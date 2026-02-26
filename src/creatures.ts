@@ -2,6 +2,7 @@ export interface CreatureTemplate {
   id: string;
   name: string;
   model: string;
+  animationSources?: string[];
   hp: number;
   mana: number;
   exp: number;
@@ -71,14 +72,21 @@ export const creatureTemplates: Record<string, CreatureTemplate> = {
   },
   evil_wizard: {
     id: "evil_wizard",
-    name: "Evil Wizard",
-    model: "/characters/npcs/Evil Wizard.glb",
-    hp: 180,
+    name: "The Lich King",
+    model: "/unity-import/Resources/Characters/ArthasLichKing/ArthasLichKing.fbx",
+    animationSources: [
+      "/unity-import/Resources/Characters/ArthasLichKing/ArthasLichKing_Animations/ArthasLichKing_Stand_19.fbx",
+      "/unity-import/Resources/Characters/ArthasLichKing/ArthasLichKing_Animations/ArthasLichKing_Run_15.fbx",
+      "/unity-import/Resources/Characters/ArthasLichKing/ArthasLichKing_Animations/ArthasLichKing_Attack2H_0.fbx",
+      "/unity-import/Resources/Characters/ArthasLichKing/ArthasLichKing_Animations/ArthasLichKing_SpellCastDirected_23.fbx",
+      "/unity-import/Resources/Characters/ArthasLichKing/ArthasLichKing_Animations/ArthasLichKing_Death_38.fbx",
+    ],
+    hp: 260,
     mana: 200,
-    exp: 85,
-    damage: 12,
-    scale: 0.75,
-    speed: 0.07,
+    exp: 120,
+    damage: 15,
+    scale: 0.01,
+    speed: 0.06,
     scriptId: "evil_wizard_ai",
     factionId: "cult",
   },
@@ -151,6 +159,60 @@ export const creatureTemplates: Record<string, CreatureTemplate> = {
     speed: 0.06,
     factionId: "village",
   },
+  sylvanas_mentor: {
+    id: "sylvanas_mentor",
+    name: "Sylvanas",
+    model: "/characters/npcs/sylvanas_npc/Sylvanas.fbx",
+    animationSources: [
+      "/characters/npcs/sylvanas_npc/animations/Sylvanas_Stand_3.fbx",
+      "/characters/npcs/sylvanas_npc/animations/Sylvanas_ReadyBow_16.fbx",
+    ],
+    hp: 300,
+    mana: 250,
+    exp: 0,
+    scale: 0.01,
+    speed: 0.06,
+    gossipMenuId: "wizard_gossip",
+    factionId: "village",
+  },
+  nathanos_ranger: {
+    id: "nathanos_ranger",
+    name: "Nathanos",
+    model: "/unity-import/Resources/Characters/NPCs/Nathanos/Nathanos.fbx",
+    animationSources: [
+      "/unity-import/Resources/Characters/NPCs/Nathanos/Nathanos_Animations/Nathanos_Stand_0.fbx",
+      "/unity-import/Resources/Characters/NPCs/Nathanos/Nathanos_Animations/Nathanos_Run_2.fbx",
+      "/unity-import/Resources/Characters/NPCs/Nathanos/Nathanos_Animations/Nathanos_AttackBow_82.fbx",
+      "/unity-import/Resources/Characters/NPCs/Nathanos/Nathanos_Animations/Nathanos_SpellCastDirected_86.fbx",
+      "/unity-import/Resources/Characters/NPCs/Nathanos/Nathanos_Animations/Nathanos_Death_8.fbx",
+    ],
+    hp: 300,
+    mana: 220,
+    exp: 0,
+    scale: 0.01,
+    speed: 0.06,
+    gossipMenuId: "wizard_gossip",
+    factionId: "village",
+  },
+  warlock_undead: {
+    id: "warlock_undead",
+    name: "Undead Warlock",
+    model: "/unity-import/Resources/Characters/NPCs/WarlockUndead/WarlockUndead.fbx",
+    animationSources: [
+      "/unity-import/Resources/Characters/NPCs/WarlockUndead/WarlockUndead_Animations/WarlockUndead_Stand_2.fbx",
+      "/unity-import/Resources/Characters/NPCs/WarlockUndead/WarlockUndead_Animations/WarlockUndead_Run_0.fbx",
+      "/unity-import/Resources/Characters/NPCs/WarlockUndead/WarlockUndead_Animations/WarlockUndead_AttackBow_77.fbx",
+      "/unity-import/Resources/Characters/NPCs/WarlockUndead/WarlockUndead_Animations/WarlockUndead_SpellCastDirected_57.fbx",
+      "/unity-import/Resources/Characters/NPCs/WarlockUndead/WarlockUndead_Animations/WarlockUndead_Death_33.fbx",
+    ],
+    hp: 220,
+    mana: 180,
+    exp: 90,
+    damage: 12,
+    scale: 0.01,
+    speed: 0.07,
+    factionId: "undead",
+  },
 };
 
 export interface CreatureTemplateLootEntry {
@@ -220,10 +282,32 @@ export const creatureTemplateLoot: Record<string, CreatureTemplateLootTable> = {
       { itemId: "rusty_sword", chance: 0.1 },
     ],
   },
+  warlock_undead: {
+    goldMultiplier: 2.2,
+    items: [
+      { itemId: "apprentice_staff", chance: 0.22 },
+      { itemId: "cloth_gloves", chance: 0.24 },
+      { itemId: "minor_health_potion", chance: 0.35 },
+      { itemId: "hunter_trinket", chance: 0.06 },
+    ],
+  },
 };
 
 export const creatureSpawns: CreatureSpawn[] = [
   { id: "village-anne", templateId: "villager_woman", position: { x: 12, y: 0, z: 14 }, isEnemy: false, orientation: Math.PI },
+  { id: "village-sylvanas", templateId: "sylvanas_mentor", position: { x: 16, y: 0, z: 10 }, isEnemy: false, orientation: Math.PI },
+  {
+    id: "village-nathanos",
+    templateId: "nathanos_ranger",
+    position: { x: 20, y: 0, z: 8 },
+    isEnemy: false,
+    orientation: Math.PI,
+    path: [
+      { x: 20, y: 0, z: 8 },
+      { x: 24, y: 0, z: 10 },
+      { x: 18, y: 0, z: 14 },
+    ],
+  },
   { id: "village-wizard", templateId: "town_wizard", position: { x: 8, y: 0, z: 18 }, isEnemy: false, orientation: Math.PI / 2 },
   { id: "village-giant", templateId: "giant_wanderer", position: { x: 18, y: 0, z: 22 }, isEnemy: false, orientation: Math.PI / 2 },
   {
@@ -337,6 +421,19 @@ export const creatureSpawns: CreatureSpawn[] = [
     isEnemy: true,
     orientation: Math.PI / 1.5,
     respawnSec: 30,
+  },
+  {
+    id: "warlock-undead-1",
+    templateId: "warlock_undead",
+    position: { x: -70, y: 0, z: -65 },
+    isEnemy: true,
+    orientation: Math.PI / 2,
+    respawnSec: 45,
+    path: [
+      { x: -74, y: 0, z: -58 },
+      { x: -68, y: 0, z: -74 },
+      { x: -62, y: 0, z: -68 },
+    ],
   },
   {
     id: "escort-trader-1",

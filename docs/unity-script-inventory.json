@@ -1,0 +1,399 @@
+{
+  "generatedAt": "2026-02-26T11:46:09.341Z",
+  "source": "C:\\repositories\\NO_WORK\\WowStudyProject",
+  "totalScripts": 78,
+  "runtimeScriptCandidates": 36,
+  "editorOrThirdPartyScripts": 42,
+  "scripts": [
+    {
+      "path": "Editor/Scripts/EffectSettingsEditor.cs",
+      "runtimeCandidate": false,
+      "category": "editor"
+    },
+    {
+      "path": "Game/Pills/Scripts/BluePill.cs",
+      "runtimeCandidate": true,
+      "category": "gameplay"
+    },
+    {
+      "path": "Game/Pills/Scripts/Pill.cs",
+      "runtimeCandidate": true,
+      "category": "gameplay"
+    },
+    {
+      "path": "Game/Pills/Scripts/RedPill.cs",
+      "runtimeCandidate": true,
+      "category": "gameplay"
+    },
+    {
+      "path": "Game/Scripts/AIs/CreatureAI.cs",
+      "runtimeCandidate": true,
+      "category": "gameplay"
+    },
+    {
+      "path": "Game/Scripts/Enemy.cs",
+      "runtimeCandidate": true,
+      "category": "gameplay"
+    },
+    {
+      "path": "Game/Scripts/Environment/Water.cs",
+      "runtimeCandidate": true,
+      "category": "gameplay"
+    },
+    {
+      "path": "Game/Scripts/Environment/WaterBody.cs",
+      "runtimeCandidate": true,
+      "category": "gameplay"
+    },
+    {
+      "path": "Game/Scripts/LaserTrap.cs",
+      "runtimeCandidate": true,
+      "category": "gameplay"
+    },
+    {
+      "path": "Game/Scripts/PauseManager.cs",
+      "runtimeCandidate": true,
+      "category": "gameplay"
+    },
+    {
+      "path": "Game/Scripts/Units/CreatureStats.cs",
+      "runtimeCandidate": true,
+      "category": "gameplay"
+    },
+    {
+      "path": "Game/Scripts/Units/FloatingNameHandler.cs",
+      "runtimeCandidate": true,
+      "category": "gameplay"
+    },
+    {
+      "path": "Game/Scripts/Units/PlayerStats.cs",
+      "runtimeCandidate": true,
+      "category": "gameplay"
+    },
+    {
+      "path": "Game/Scripts/Units/UnitCollisions.cs",
+      "runtimeCandidate": true,
+      "category": "gameplay"
+    },
+    {
+      "path": "Game/Scripts/Units/UnitStats.cs",
+      "runtimeCandidate": true,
+      "category": "gameplay"
+    },
+    {
+      "path": "OBJImport/CharWordReader.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-objimport"
+    },
+    {
+      "path": "OBJImport/MTLLoader.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-objimport"
+    },
+    {
+      "path": "OBJImport/OBJLoader.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-objimport"
+    },
+    {
+      "path": "OBJImport/OBJLoaderHelper.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-objimport"
+    },
+    {
+      "path": "OBJImport/OBJObjectBuilder.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-objimport"
+    },
+    {
+      "path": "OBJImport/Samples/ObjFromFile.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-objimport"
+    },
+    {
+      "path": "OBJImport/Samples/ObjFromStream.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-objimport"
+    },
+    {
+      "path": "OBJImport/StringExtensions.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-objimport"
+    },
+    {
+      "path": "OBJImport/TextureLoader/BinaryExtensions.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-objimport"
+    },
+    {
+      "path": "OBJImport/TextureLoader/BMPLoader.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-objimport"
+    },
+    {
+      "path": "OBJImport/TextureLoader/ColorExtensions.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-objimport"
+    },
+    {
+      "path": "OBJImport/TextureLoader/DDSLoader.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-objimport"
+    },
+    {
+      "path": "OBJImport/TextureLoader/ImageLoader.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-objimport"
+    },
+    {
+      "path": "OBJImport/TextureLoader/ImageLoaderHelper.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-objimport"
+    },
+    {
+      "path": "OBJImport/TextureLoader/ImageUtils.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-objimport"
+    },
+    {
+      "path": "OBJImport/TextureLoader/TGALoader.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-objimport"
+    },
+    {
+      "path": "Realistic Effects Pack/Scripts/Demo/MyGui.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-effects"
+    },
+    {
+      "path": "Realistic Effects Pack/Scripts/Prefabs/Balls/AddMaterialOnHit.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-effects"
+    },
+    {
+      "path": "Realistic Effects Pack/Scripts/Prefabs/Balls/LazyLoad.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-effects"
+    },
+    {
+      "path": "Realistic Effects Pack/Scripts/Prefabs/Balls/ProjectileCollisionBehaviour.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-effects"
+    },
+    {
+      "path": "Realistic Effects Pack/Scripts/Prefabs/Buffs/ShieldCollisionBehaviour.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-effects"
+    },
+    {
+      "path": "Realistic Effects Pack/Scripts/Prefabs/Buffs/WaterUvAnimation.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-effects"
+    },
+    {
+      "path": "Realistic Effects Pack/Scripts/Prefabs/Buffs/WaterWaveUvAnimation.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-effects"
+    },
+    {
+      "path": "Realistic Effects Pack/Scripts/Prefabs/Shots/LineRendererBehaviour.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-effects"
+    },
+    {
+      "path": "Realistic Effects Pack/Scripts/Share/CollisionActiveBehaviour.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-effects"
+    },
+    {
+      "path": "Realistic Effects Pack/Scripts/Share/DeadTime.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-effects"
+    },
+    {
+      "path": "Realistic Effects Pack/Scripts/Share/DistortionMobile.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-effects"
+    },
+    {
+      "path": "Realistic Effects Pack/Scripts/Share/EffectSettings.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-effects"
+    },
+    {
+      "path": "Realistic Effects Pack/Scripts/Share/FadeInOutLight.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-effects"
+    },
+    {
+      "path": "Realistic Effects Pack/Scripts/Share/FadeInOutParticles.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-effects"
+    },
+    {
+      "path": "Realistic Effects Pack/Scripts/Share/FadeInOutScale.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-effects"
+    },
+    {
+      "path": "Realistic Effects Pack/Scripts/Share/FadeInOutShaderColor.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-effects"
+    },
+    {
+      "path": "Realistic Effects Pack/Scripts/Share/FadeInOutShaderFloat.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-effects"
+    },
+    {
+      "path": "Realistic Effects Pack/Scripts/Share/FadeInOutStatus.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-effects"
+    },
+    {
+      "path": "Realistic Effects Pack/Scripts/Share/FixShaderQueue.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-effects"
+    },
+    {
+      "path": "Realistic Effects Pack/Scripts/Share/OnStartSendCollision.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-effects"
+    },
+    {
+      "path": "Realistic Effects Pack/Scripts/Share/QueueUvAnimation.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-effects"
+    },
+    {
+      "path": "Realistic Effects Pack/Scripts/Share/RandomRotate.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-effects"
+    },
+    {
+      "path": "Realistic Effects Pack/Scripts/Share/UVTextureAnimator.cs",
+      "runtimeCandidate": false,
+      "category": "third-party-effects"
+    },
+    {
+      "path": "Scripts/Core/Animation/AnimationManager.cs",
+      "runtimeCandidate": true,
+      "category": "core"
+    },
+    {
+      "path": "Scripts/Core/Animation/CharacterAnimationBase.cs",
+      "runtimeCandidate": true,
+      "category": "core"
+    },
+    {
+      "path": "Scripts/Core/Camera/WarcraftCamera.cs",
+      "runtimeCandidate": true,
+      "category": "core"
+    },
+    {
+      "path": "Scripts/Core/Chat/ChatManager.cs",
+      "runtimeCandidate": true,
+      "category": "core"
+    },
+    {
+      "path": "Scripts/Core/Database/Entities/Creature.cs",
+      "runtimeCandidate": true,
+      "category": "core"
+    },
+    {
+      "path": "Scripts/Core/Database/Entities/CreatureTemplate.cs",
+      "runtimeCandidate": true,
+      "category": "core"
+    },
+    {
+      "path": "Scripts/Core/Database/Entities/WaypointData.cs",
+      "runtimeCandidate": true,
+      "category": "core"
+    },
+    {
+      "path": "Scripts/Core/Database/SQLite.cs",
+      "runtimeCandidate": true,
+      "category": "core"
+    },
+    {
+      "path": "Scripts/Core/Environment/BeforeSceneStartScript.cs",
+      "runtimeCandidate": true,
+      "category": "core"
+    },
+    {
+      "path": "Scripts/Core/Environment/Maps/MapLoader.cs",
+      "runtimeCandidate": true,
+      "category": "core"
+    },
+    {
+      "path": "Scripts/Core/Environment/SpawnManager.cs",
+      "runtimeCandidate": true,
+      "category": "core"
+    },
+    {
+      "path": "Scripts/Core/Global.cs",
+      "runtimeCandidate": true,
+      "category": "core"
+    },
+    {
+      "path": "Scripts/Core/Movement/CharacterAnimatorController.cs",
+      "runtimeCandidate": true,
+      "category": "core"
+    },
+    {
+      "path": "Scripts/Core/Movement/ControlBinding.cs",
+      "runtimeCandidate": true,
+      "category": "core"
+    },
+    {
+      "path": "Scripts/Core/Movement/Controls.cs",
+      "runtimeCandidate": true,
+      "category": "core"
+    },
+    {
+      "path": "Scripts/Core/Movement/PlayerMovement.cs",
+      "runtimeCandidate": true,
+      "category": "core"
+    },
+    {
+      "path": "Scripts/Core/Spells/RangedSpell.cs",
+      "runtimeCandidate": true,
+      "category": "core"
+    },
+    {
+      "path": "Scripts/Core/Utils/CollectionUtils.cs",
+      "runtimeCandidate": true,
+      "category": "core"
+    },
+    {
+      "path": "Scripts/Core/Utils/CommonUtils.cs",
+      "runtimeCandidate": true,
+      "category": "core"
+    },
+    {
+      "path": "Scripts/Core/Utils/Constants.cs",
+      "runtimeCandidate": true,
+      "category": "core"
+    },
+    {
+      "path": "Scripts/Core/Utils/InterfaceUtils.cs",
+      "runtimeCandidate": true,
+      "category": "core"
+    },
+    {
+      "path": "Scripts/Core/Utils/TimeUtils.cs",
+      "runtimeCandidate": true,
+      "category": "core"
+    },
+    {
+      "path": "Standard Assets/Image Effects (Pro Only)/ImageEffectBase.cs",
+      "runtimeCandidate": false,
+      "category": "standard-assets"
+    },
+    {
+      "path": "Standard Assets/Image Effects (Pro Only)/ImageEffects.cs",
+      "runtimeCandidate": false,
+      "category": "standard-assets"
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "generatedAt": "2026-02-26T11:46:09.351Z",
+  "source": "C:\\repositories\\NO_WORK\\WowStudyProject",
+  "dryRun": true,
+  "target": "C:\\repositories\\NO_WORK\\wow-ts\\public\\unity-import",
+  "totalAssetsMatched": 7672,
+  "totalAssetBytes": 3162045771,
+  "totalAssetMegabytes": 3015.56,
+  "byExtension": {
+    ".png": 5057,
+    ".mtl": 824,
+    ".obj": 824,
+    ".fbx": 956,
+    ".jpg": 3,
+    ".mp3": 4,
+    ".bmp": 4
+  },
+  "copiedAssets": 0,
+  "includeExtensions": [
+    ".bmp",
+    ".fbx",
+    ".glb",
+    ".gltf",
+    ".jpeg",
+    ".jpg",
+    ".mp3",
+    ".mtl",
+    ".obj",
+    ".png",
+    ".wav"
+  ]
+}

@@ -1,110 +1,179 @@
 # WoW-TS
 
-A Three.js + TypeScript RPG sandbox with gameplay systems and a Unity-like world editor.
+Sandbox RPG in `Three.js + TypeScript` con:
+- modalità **Play** (combattimento, UI RPG, quest, chat, classi/spell)
+- modalità **World Editor** in stile Unity-like (Hierarchy/Inspector/Project)
+- pipeline asset Unity importati + cataloghi esterni da URL/CDN
 
-## Setup
+## Screenshot
+### Play Mode
+![Play Mode](screenshots/game_mode.png)
+
+### Editor Mode
+![Editor Mode](screenshots/editor_mode.png)
+
+## Requisiti
+- Node.js `24.9.0`
+- npm `11.6.1`
+
+## Avvio Rapido
 ```bash
 npm install
 npm run dev
 ```
-Open `http://localhost:5173`.
 
-Build/preview:
+Apri `http://localhost:5173`.
+
+Build e preview:
 ```bash
 npm run build
 npm run preview
 ```
 
-## Core Controls
-- Movement: `W/S` forward/back, `A/D` rotate, `Space` jump.
-- Combat: `1..0` and `-` cast spells.
-- UI hotkeys: `B` bags, `C` character, `P` spellbook, `N` talents.
-- Chat: `Enter` focus/send.
-- Pause: `Esc`.
+## Modalità Play
+### Cosa include
+- Login + selezione personaggio
+- Classi e spell di base con spellbar 12 slot
+- Combat loop con target, HP/mana/xp UI, floating combat text
+- Quest tracker e finestre Character/Spellbook/Talents/Bags
+- Spawn runtime di creature/gameobject da comando
+- Volo (`.fly on`) con gestione animazioni airborne/swimming quando disponibili
 
-## World Editor Controls
-- `W/E/R`: translate/rotate/scale
-- `F`: focus selection
-- `Del`: remove selection
-- `RMB + WASD`: fly camera
-- `Q`: quick context menu
+### Controlli Play
+- Movimento: `W/S` avanti-indietro, `A/D` rotazione
+- Salto: `Space`
+- Cast spellbar: `1..0`, `-`, click sugli slot
+- Fly mode: `Space` su, `X` giù
+- UI hotkeys: `B` Bags, `C` Character, `P` Spellbook, `N` Talents
+- Chat: `Enter`
+- Pause: `Esc`
 
-## World Editor Workflow
-1. Enter editor mode from character selection and run `.editor on`.
-2. Use the bottom `Project / Assets` panel to search/filter assets.
-3. Place assets with drag and drop, double click, or `.editor place <decorId>`.
-4. Save world placements with `.editor save` (stored in localStorage).
-5. If needed, restore defaults with `.editor defaults` or clear with `.editor clear`.
+## Modalità Editor
+### Attivazione
+Da chat:
+- `.editor on`
+- `.editor off`
 
-## All Chat Commands
-Commands start with `.`
+Alias:
+- `.worldeditor ...` (stessi subcomandi di `.editor`)
 
-- `.editscale <value>`
-  - Scale currently selected creature (positive number).
+### Layout editor
+- Top bar: save/undo/redo/defaults/clear/import catalog
+- Sinistra: **Hierarchy**
+- Centro: viewport scena
+- Destra: **Inspector** (transform + preview asset)
+- Basso: **Project / Assets** con struttura cartelle + breadcrumb
+
+### Controlli Editor
+- `W / E / R`: Move / Rotate / Scale gizmo mode
+- `F`: focus selezione
+- `Del`: delete selection (o hide map object se selezione map)
+- `Q`: context menu rapido
+- `RMB + WASD`: fly camera editor
+
+### Browser asset (Project)
+- Search per id/path
+- Filtri categoria (`All`, `Placeable`, `Model`, `Animation`, `Texture`, `Audio`, `Material`, `Exported`, `Extracted`, `Game`, `Tilesets`, `Asset Packs`, `Effects Pack`, `Manual`, `Auto`, `WMO`, `World`, `Maps`, `Creature`, `Item`, `Spell`)
+- Filtro formato (`Any`, `OBJ`, `FBX`, `GLB`, `GLTF`)
+- Doppio click su asset placeable: piazza in scena
+- Drag & drop da browser a scena: piazza in world
+- Context menu per azioni specifiche per tipo asset
+
+### Inspector preview
+- Immagini/texture: preview immagine
+- Audio: player inline
+- Modelli/animazioni (`fbx/glb/gltf/obj`): viewer 3D con
+  - dropdown clip animazioni
+  - `Play/Pause`
+  - `Reset`
+  - slider velocità
+  - debug stato animazione (clip/tracks/time/mixer)
+  - rotazione con drag
+  - pan con `Ctrl + drag` (centrare a mano il modello)
+  - zoom disabilitato volutamente
+
+## Comandi Chat (completi)
+I comandi iniziano con `.`
+
+- `.editscale <positive number>`
+  - Scala la creatura selezionata.
+
 - `.spawncreature <TEMPLATE_ID> [friendly]`
-  - Spawn creature at player position. Optional `friendly` flag.
+  - Spawna una creatura volatile alla posizione player.
+  - `friendly` opzionale la rende non ostile.
+
 - `.spawngameobject <TEMPLATE_ID>`
-  - Spawn gameobject at player position.
-- `.gm on|off`
-  - Enable/disable GM behavior.
-- `.fly on|off`
-  - Toggle fly mode (`Space` up, `X` down).
+  - Spawna un gameobject volatile alla posizione player.
+
+- `.gm on | off`
+  - Attiva/disattiva GM mode.
+
+- `.fly on | off`
+  - Attiva/disattiva volo player.
+
 - `.movehere`
-  - Move selected target to player position.
-- `.daynight on|off`
-  - Toggle day/night cycle.
+  - Muove il target selezionato sulla posizione player.
+
+- `.daynight on | off`
+  - Attiva/disattiva ciclo giorno/notte.
+
 - `.hasscript`
-  - Show script info for selected creature.
-- `.showcollisionrays on|off`
-  - Toggle collision debug rays.
-- `.collisionrays on|off`
-  - Alias of `.showcollisionrays`.
+  - Mostra script associato alla creatura selezionata.
+
+- `.showcollisionrays on | off`
+  - Abilita/disabilita debug collision rays.
+
+- `.collisionrays on | off`
+  - Alias di `.showcollisionrays`.
+
 - `.editor help`
-- `.editor on|off|list [query]|place <decorId>|clear|save|reload|defaults`
+  - Mostra help sintetico editor.
+
+- `.editor on`
+  - Entra in editor mode.
+
+- `.editor off`
+  - Esce da editor mode.
+
+- `.editor list [query]`
+  - Lista decor id disponibili (filtrabile).
+
+- `.editor place <decorId>`
+  - Piazza decor davanti camera editor.
+
+- `.editor clear`
+  - Rimuove tutte le decor piazzate in sessione.
+
+- `.editor save`
+  - Salva placements decor su localStorage.
+
+- `.editor reload`
+  - Ricarica placements decor.
+
+- `.editor defaults`
+  - Ripristina decor di default.
+
 - `.worldeditor ...`
-  - Alias of `.editor`.
+  - Alias completo di `.editor ...`.
 
-## Decoration Catalog System
-Runtime catalog is merged from:
-1. Manual config entries (`src/world/unity-decor.config.ts`)
-2. Auto-generated local export entries
-3. Imported external catalogs (stored in localStorage)
+## Catalogo Asset e Import da host esterni
+Il runtime mergea asset da:
+- configurazione manuale (`src/world/unity-decor.config.ts`)
+- generati da scanner locale (`unity-import`)
+- cataloghi esterni importati da JSON e salvati in localStorage
 
-### Auto-generated local catalog
-Generate/update from local Unity export folders:
-```bash
-node tools/generate-unity-exported-decor.mjs
-```
-
-Scanned paths:
-- `public/unity-import/Resources/Exported/**/*.{obj,fbx,glb,gltf}`
-- `public/unity-import/Extracted/world/wmo/**/*.{obj,fbx,glb,gltf}`
-
-Output:
-- `src/world/unity-exported-decor.generated.ts`
-
-## External Asset Catalog Import (remote hosts)
-From editor toolbar:
-- `Import Catalog`: upload JSON file
-- `Reset Imported`: remove imported entries from localStorage
-
-Imported entries are merged by `id`:
-- same `id` => updated
-- new `id` => added
-
-Storage key:
+Storage key cataloghi esterni:
 - `wowts.unity_decor_catalog.external.v1`
 
-### What happens during import
-1. The JSON file is parsed.
-2. Relative URLs are resolved using `baseUrl`.
-3. Imported assets are merged into the runtime catalog by `id`.
-4. Imported rows are persisted in localStorage.
-5. The asset browser updates immediately and new assets become placeable.
+Toolbar editor:
+- `Import Catalog`
+- `Remove Catalog` (con dropdown key catalogo)
+- `Reset Imported`
 
-## JSON Catalog Standard (v1)
-Primary structure is an **asset library** (not map placement data).  
-Recommended minimal format:
+In editor mode le notifiche operazione sono via `alert` (chat nascosta).
+
+### Standard JSON catalogo (`wowts.decor-catalog.v1`)
+Formato consigliato:
 
 ```json
 {
@@ -120,42 +189,43 @@ Recommended minimal format:
 }
 ```
 
-Notes:
-- Required per asset: `id`, `url` (aliases supported: `path`, `model`, `resource`).
-- `baseUrl` resolves relative paths for model/preview/animations.
-- Absolute `https://...` URLs and root-relative `/...` paths are supported.
-- This lets you keep the same logic as local `Exporter`, but physically host files elsewhere per install/user.
-- Legacy format `{ decorations: [...] }` is still accepted.
-- Optional advanced fields (`position`, `rotationY`, `defaultSpawn`, `light`, etc.) remain supported for compatibility.
+Regole:
+- `id` e `url` sono obbligatori per ogni asset.
+- Alias URL supportati: `path`, `model`, `resource`.
+- `baseUrl` risolve URL relativi.
+- Supportati URL assoluti e path root-relative.
+- Legacy `{ decorations: [...] }` compatibile.
+- `catalogKey` deve essere univoca all’import.
 
-### Extended example
-```json
-{
-  "version": "wowts.decor-catalog.v1",
-  "baseUrl": "https://cdn.example.com/wow-extra/",
-  "assets": [
-    {
-      "id": "torch-horde-01",
-      "url": "models/props/torch_horde_01.fbx",
-      "preview": "previews/torch_horde_01.png",
-      "animations": ["models/props/torch_horde_01_idle.fbx"],
-      "collider": false,
-      "placeOnGround": true
-    }
-  ]
-}
+## Pipeline Asset Unity
+Script utili:
+```bash
+node tools/generate-unity-exported-decor.mjs
+node tools/generate-unity-import-index.mjs
 ```
 
-## Asset Browser Filters
-In editor Project/Assets panel:
-- Search by id/path
-- Category: `All`, `Manual`, `Auto`, `WMO`, `World`, `Maps`, `Creature`, `Item`, `Spell`
-- Format: `Any`, `OBJ`, `FBX`, `GLB`, `GLTF`
+Output principali:
+- `src/world/unity-exported-decor.generated.ts`
+- `src/world/unity-import-index.generated.ts`
 
-## Important Files
+Note:
+- Scanner esteso a contenuti in `public/unity-import/**`
+- Mapping automatico FBX animazioni quando trova pattern `<ModelName>_Animations/*.fbx`
+
+## Persistenza Locale
+Nessun backend/DB: solo `localStorage`:
+- salvataggi decor editor
+- cataloghi importati
+- dati runtime necessari al gioco
+
+## File chiave
+- `src/game.ts`
+- `src/ui.ts`
 - `src/editor/world-editor.panel.ts`
+- `src/chat/commands/index.ts`
+- `src/chat/commands/worldEditor.ts`
 - `src/world/unity-decor-catalog.ts`
 - `src/world/unity-decor.config.ts`
 - `src/world/unity-exported-decor.generated.ts`
-- `tools/generate-unity-exported-decor.mjs`
-- `src/chat/commands/index.ts`
+- `src/world/unity-import-index.generated.ts`
+- `src/utils/animationCatalog.ts`

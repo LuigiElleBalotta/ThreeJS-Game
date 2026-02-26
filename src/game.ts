@@ -976,6 +976,24 @@ export class Game {
         this.applyGroundTexture(this.groundMesh, path, repeat);
     }
 
+    setSkyTexture(path: string) {
+        const loader = new THREE.TextureLoader();
+        loader.load(
+            path,
+            (skyTexture) => {
+                skyTexture.colorSpace = THREE.SRGBColorSpace;
+                this.scene.background = skyTexture;
+                this.skyTextureActive = true;
+                this.ui?.addChatMessage("System", `Sky texture set: ${path}`);
+            },
+            undefined,
+            (err) => {
+                console.warn("Unable to load sky texture", err);
+                this.ui?.addChatMessage("System", `Failed to load sky texture: ${path}`);
+            },
+        );
+    }
+
     private setGameplayHudVisible(visible: boolean) {
         const ids = [
             "ui-player-health-wrap",
@@ -993,7 +1011,23 @@ export class Game {
         for (const id of ids) {
             const el = document.getElementById(id);
             if (!el) continue;
-            el.style.display = visible ? "" : "none";
+            if (!visible) {
+                if (!el.dataset.prevDisplay) {
+                    const current = window.getComputedStyle(el).display;
+                    el.dataset.prevDisplay = current && current !== "none" ? current : "";
+                }
+                el.style.display = "none";
+                continue;
+            }
+            const prev = el.dataset.prevDisplay ?? "";
+            if (id === "spellbar") {
+                el.style.display = "flex";
+            } else if (id === "wow-toolbar") {
+                el.style.display = "flex";
+            } else {
+                el.style.display = prev;
+            }
+            delete el.dataset.prevDisplay;
         }
         if (this.enemyBarDiv) this.enemyBarDiv.style.display = visible ? this.enemyBarDiv.style.display : "none";
     }

@@ -2,6 +2,7 @@ import { UNITY_WORLD_DECORATIONS, type UnityDecorationConfig } from "./unity-dec
 
 const LOCAL_STORAGE_KEY = "wowts.unity_decor_catalog.external.v1";
 const CATALOG_VERSION = "wowts.decor-catalog.v1";
+const LEGACY_CATALOG_KEY = "__legacy_import__";
 
 type ImportableDecor = Partial<UnityDecorationConfig> & {
   id?: string;
@@ -19,6 +20,16 @@ type DecorCatalogFile = {
   baseUrl?: string;
   assets?: ImportableDecor[];
   decorations?: ImportableDecor[];
+};
+
+type ImportedCatalogRow = {
+  importedAt: number;
+  decorations: UnityDecorationConfig[];
+};
+
+type ImportedCatalogStoreV2 = {
+  version: 2;
+  catalogs: Record<string, ImportedCatalogRow>;
 };
 
 function canUseLocalStorage() {
@@ -80,7 +91,6 @@ function sanitizeDecor(input: ImportableDecor, baseUrl?: string): UnityDecoratio
     if (animations.length) result.animationSources = animations;
   }
 
-  // Optional advanced fields; not required for asset-library catalogs.
   const position = input.position as any;
   if (position && typeof position === "object") {
     result.position = {
@@ -132,22 +142,129 @@ function sanitizeDecor(input: ImportableDecor, baseUrl?: string): UnityDecoratio
   return result;
 }
 
-export function getImportedUnityDecorations(): UnityDecorationConfig[] {
-  if (!canUseLocalStorage()) return [];
+function isValidCatalogKey(key: string) {
+  return /^[a-zA-Z0-9._-]{3,64}$/.test(key);
+}
+
+function parseCatalogSource(parsed: any): { source: DecorCatalogFile; entries: ImportableDecor[] } {
+  const source: DecorCatalogFile = Array.isArray(parsed) ? { decorations: parsed } : parsed;
+  if (!source || typeof source !== "object") {
+    throw new Error("Invalid catalog JSON.");
+  }
+  if (source.version && source.version !== CATALOG_VERSION) {
+    throw new Error(`Unsupported catalog version '${source.version}'. Expected '${CATALOG_VERSION}'.`);
+  }
+  const entries = Array.isArray(source.assets)
+    ? source.assets
+    : Array.isArray(source.decorations)
+      ? source.decorations
+      : null;
+  if (!entries) {
+    throw new Error("Catalog must contain an 'assets' array (or legacy 'decorations').");
+  }
+  return { source, entries };
+}
+
+function normalizeStore(raw: any): ImportedCatalogStoreV2 {
+  if (!raw) return { version: 2, catalogs: {} };
+
+  if (Array.isArray(raw)) {
+    const legacyRows = raw.filter((row) => row && typeof row.id === "string" && typeof row.path === "string");
+    if (!legacyRows.length) return { version: 2, catalogs: {} };
+    return {
+      version: 2,
+      catalogs: {
+        [LEGACY_CATALOG_KEY]: {
+          importedAt: Date.now(),
+          decorations: legacyRows,
+        },
+      },
+    };
+  }
+
+  if (raw.version === 2 && raw.catalogs && typeof raw.catalogs === "object") {
+    const out: ImportedCatalogStoreV2 = { version: 2, catalogs: {} };
+    for (const [key, value] of Object.entries<any>(raw.catalogs)) {
+      if (!value || typeof value !== "object") continue;
+      const decorations = Array.isArray(value.decorations)
+        ? value.decorations.filter((row) => row && typeof row.id === "string" && typeof row.path === "string")
+        : [];
+      if (!decorations.length) continue;
+      out.catalogs[key] = {
+        importedAt: typeof value.importedAt === "number" ? value.importedAt : Date.now(),
+        decorations,
+      };
+    }
+    return out;
+  }
+
+  return { version: 2, catalogs: {} };
+}
+
+function loadStore(): ImportedCatalogStoreV2 {
+  if (!canUseLocalStorage()) return { version: 2, catalogs: {} };
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((row) => row && typeof row.id === "string" && typeof row.path === "string");
+    if (!raw) return { version: 2, catalogs: {} };
+    return normalizeStore(JSON.parse(raw));
   } catch {
-    return [];
+    return { version: 2, catalogs: {} };
   }
 }
 
-function setImportedUnityDecorations(rows: UnityDecorationConfig[]) {
+function saveStore(store: ImportedCatalogStoreV2) {
   if (!canUseLocalStorage()) return;
-  localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(rows));
+  localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(store));
+}
+
+export function getImportedUnityCatalogKeys() {
+  const store = loadStore();
+  return Object.keys(store.catalogs).sort((a, b) => a.localeCompare(b));
+}
+
+export function validateUnityDecorCatalogJson(jsonText: string) {
+  try {
+    const parsed = JSON.parse(jsonText);
+    const { source, entries } = parseCatalogSource(parsed);
+    let validAssets = 0;
+    let skipped = 0;
+    for (const row of entries) {
+      const clean = sanitizeDecor(row, source.baseUrl);
+      if (clean) validAssets += 1;
+      else skipped += 1;
+    }
+    if (!validAssets) {
+      return { ok: false as const, error: "Catalog contains no valid assets (required: id + url/path/model/resource)." };
+    }
+    return {
+      ok: true as const,
+      validAssets,
+      skipped,
+      totalRows: entries.length,
+      version: source.version ?? CATALOG_VERSION,
+    };
+  } catch (err: any) {
+    return { ok: false as const, error: err?.message ?? "Invalid catalog JSON." };
+  }
+}
+
+export function getImportedUnityDecorations(): UnityDecorationConfig[] {
+  const store = loadStore();
+  const out: UnityDecorationConfig[] = [];
+  for (const key of Object.keys(store.catalogs)) {
+    out.push(...store.catalogs[key].decorations);
+  }
+  return out;
+}
+
+export function removeImportedUnityCatalog(catalogKey: string) {
+  const key = ensureValidString(catalogKey);
+  if (!key) return false;
+  const store = loadStore();
+  if (!store.catalogs[key]) return false;
+  delete store.catalogs[key];
+  saveStore(store);
+  return true;
 }
 
 export function clearImportedUnityDecorations() {
@@ -177,30 +294,22 @@ export function getUnityDecorationById(id: string): UnityDecorationConfig | null
   return null;
 }
 
-export function importUnityDecorationsFromCatalogJson(jsonText: string) {
+export function importUnityDecorationsFromCatalogJson(jsonText: string, catalogKey: string) {
+  const key = ensureValidString(catalogKey);
+  if (!key) throw new Error("Catalog key is required.");
+  if (!isValidCatalogKey(key)) {
+    throw new Error("Invalid catalog key. Use 3-64 chars: letters, numbers, dot, dash, underscore.");
+  }
+
+  const store = loadStore();
+  if (store.catalogs[key]) {
+    throw new Error(`Catalog key '${key}' already exists. Choose a new key.`);
+  }
+
   const parsed = JSON.parse(jsonText);
-  const source: DecorCatalogFile = Array.isArray(parsed) ? { decorations: parsed } : parsed;
-  if (!source || typeof source !== "object") {
-    throw new Error("Invalid catalog JSON.");
-  }
-  if (source.version && source.version !== CATALOG_VERSION) {
-    throw new Error(`Unsupported catalog version '${source.version}'. Expected '${CATALOG_VERSION}'.`);
-  }
-  const entries = Array.isArray(source.assets)
-    ? source.assets
-    : Array.isArray(source.decorations)
-      ? source.decorations
-      : null;
-  if (!entries) {
-    throw new Error("Catalog must contain an 'assets' array (or legacy 'decorations').");
-  }
+  const { source, entries } = parseCatalogSource(parsed);
 
-  const imported = getImportedUnityDecorations();
-  const byId = new Map<string, UnityDecorationConfig>();
-  for (const row of imported) byId.set(row.id, row);
-
-  let added = 0;
-  let updated = 0;
+  const decorations: UnityDecorationConfig[] = [];
   let skipped = 0;
   for (const row of entries) {
     const clean = sanitizeDecor(row, source.baseUrl);
@@ -208,17 +317,23 @@ export function importUnityDecorationsFromCatalogJson(jsonText: string) {
       skipped += 1;
       continue;
     }
-    if (byId.has(clean.id)) updated += 1;
-    else added += 1;
-    byId.set(clean.id, clean);
+    decorations.push(clean);
+  }
+  if (!decorations.length) {
+    throw new Error("No valid assets found in catalog.");
   }
 
-  setImportedUnityDecorations(Array.from(byId.values()));
+  store.catalogs[key] = {
+    importedAt: Date.now(),
+    decorations,
+  };
+  saveStore(store);
+
   return {
-    added,
-    updated,
+    catalogKey: key,
+    added: decorations.length,
     skipped,
-    totalImported: byId.size,
+    totalImportedCatalogs: Object.keys(store.catalogs).length,
     catalogVersion: CATALOG_VERSION,
   };
 }

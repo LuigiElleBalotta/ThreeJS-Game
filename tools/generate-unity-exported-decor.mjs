@@ -5,10 +5,7 @@ const cwd = process.cwd();
 const modelExt = new Set([".obj", ".fbx", ".glb", ".gltf"]);
 const imageExt = new Set([".png", ".jpg", ".jpeg", ".webp"]);
 
-const roots = [
-  path.join(cwd, "public", "unity-import", "Resources", "Exported"),
-  path.join(cwd, "public", "unity-import", "Extracted", "world", "wmo"),
-];
+const roots = [path.join(cwd, "public", "unity-import")];
 
 function toPosix(p) {
   return p.split(path.sep).join("/");
@@ -94,13 +91,28 @@ async function main() {
       : undefined;
 
     const lowered = relToPublic.toLowerCase();
+    if (lowered.includes("/animations/") || lowered.includes("_animations/")) continue;
     const isMapChunk = lowered.includes("/maps/") || /adt_\d+_\d+\.obj$/.test(lowered);
     const isWmo = lowered.includes("/wmo/");
+    const ext = path.extname(filePath).toLowerCase();
+
+    let animationSources;
+    if (ext === ".fbx") {
+      const baseName = path.basename(filePath, ext);
+      const animDir = path.join(path.dirname(filePath), `${baseName}_Animations`);
+      const animFiles = (await walk(animDir))
+        .filter((p) => path.extname(p).toLowerCase() === ".fbx")
+        .sort((a, b) => a.localeCompare(b));
+      if (animFiles.length) {
+        animationSources = animFiles.map((p) => `/${toPosix(path.relative(path.join(cwd, "public"), p))}`);
+      }
+    }
 
     rows.push({
       id,
       path: `/${relToPublic}`,
       previewImage: previewRel,
+      animationSources,
       position: { x: 0, y: 0, z: 0 },
       rotationY: 0,
       scale: 1,
